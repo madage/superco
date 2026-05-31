@@ -80,6 +80,11 @@ export const en = {
   loading: 'Loading',
   optional: 'optional',
 
+  // Permission Mode
+  permissionMode: 'Permission Mode',
+  autoMode: 'Auto',
+  restrictedMode: 'Restricted',
+
   // Chat
   chat: 'Chat',
   noMessages: 'No messages yet. Send a message to start the conversation.',

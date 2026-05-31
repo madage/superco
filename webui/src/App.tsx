@@ -15,7 +15,18 @@ type Page = 'nodes' | 'sessions' | 'chat';
 
 function App() {
   const { t, lang } = useLang();
-  const [auth, setAuth] = useState<AuthState>({ token: null, user: null });
+  const [auth, setAuth] = useState<AuthState>(() => {
+    const token = localStorage.getItem('token');
+    const raw = localStorage.getItem('user');
+    if (token && raw) {
+      try {
+        return { token, user: JSON.parse(raw) };
+      } catch {
+        // corrupted user data, ignore
+      }
+    }
+    return { token: null, user: null };
+  });
   const [page, setPage] = useState<Page>('nodes');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -26,15 +37,43 @@ function App() {
   // Queue of pending permission requests from claude
   const [pendingPermissions, setPendingPermissions] = useState<Envelope[]>([]);
 
+  // Permission mode: 'auto' (auto-approve) or 'restricted' (require user input)
+  const [permissionMode, setPermissionMode] = useState<'auto' | 'restricted'>('auto');
+  const permissionModeRef = useRef(permissionMode);
+  permissionModeRef.current = permissionMode;
+
   // Message Bus — only connect when authenticated
   const bus = useMessageBus({
     userID: auth.user?.id || 'anonymous',
     onMessage: useCallback((env: Envelope) => {
       if (env.type === 'permission.request') {
-        setPendingPermissions((prev) => [...prev, env]);
+        if (permissionModeRef.current === 'auto') {
+          // Auto-approve: send response directly, don't add to pending queue
+          const sid = sessionIDRef.current;
+          if (sid) {
+            bus.send({
+              type: 'permission.response',
+              to: `session://${sid}`,
+              session_id: sid,
+              payload: {
+                tool_use_id: env.payload?.tool_use_id,
+                approved: true,
+              },
+            });
+          } else {
+            // Session not ready yet — queue for later handling
+            setPendingPermissions((prev) => [...prev, env]);
+          }
+        } else {
+          setPendingPermissions((prev) => [...prev, env]);
+        }
       }
     }, []),
   });
+
+  // Track sessionID via ref so the stable onMessage callback can access it
+  const sessionIDRef = useRef<string | null>(null);
+  sessionIDRef.current = bus.sessionID;
 
   const sendPermissionResponse = useCallback((approved: boolean) => {
     const queue = pendingPermissions;
@@ -319,6 +358,36 @@ function App() {
             {!busConnected && (
               <span style={{ fontSize: '0.8em', color: '#f44336' }}>Disconnected</span>
             )}
+            {/* Permission mode toggle */}
+            <button
+              onClick={() => setPermissionMode(prev => prev === 'auto' ? 'restricted' : 'auto')}
+              style={{
+                padding: '4px 10px',
+                background: permissionMode === 'auto' ? '#e8f5e9' : '#fff3e0',
+                color: permissionMode === 'auto' ? '#2e7d32' : '#e65100',
+                border: `1px solid ${permissionMode === 'auto' ? '#a5d6a7' : '#ffe0b2'}`,
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.8em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.2s',
+              }}
+              title={permissionMode === 'auto' ? t('restrictedMode') : t('autoMode')}
+            >
+              <span style={{
+                display: 'inline-block',
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: permissionMode === 'auto' ? '#4caf50' : '#ff9800',
+                transition: 'background 0.2s',
+              }} />
+              {t('permissionMode')}: {permissionMode === 'auto' ? t('autoMode') : t('restrictedMode')}
+            </button>
+
             <div style={{ flex: 1 }} />
             {hasSession && (
               <button

@@ -80,6 +80,11 @@ export const zh = {
   loading: '加载中',
   optional: '可选',
 
+  // Permission Mode
+  permissionMode: '权限模式',
+  autoMode: '自动模式',
+  restrictedMode: '受限模式',
+
   // Chat
   chat: '聊天',
   noMessages: '暂无消息。发送消息开始对话。',
