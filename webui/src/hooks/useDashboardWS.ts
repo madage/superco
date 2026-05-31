@@ -58,7 +58,8 @@ export function useDashboardWS() {
             setState((prev) => {
               const exists = prev.nodes.find((n) => n.id === p.node_id);
               if (!exists) {
-                // New node from bus runtime — add it
+                // Only add new nodes that are actually online — ignore stale offline status
+                if (p.status !== 'online') return prev;
                 const newNode: Node = {
                   id: p.node_id,
                   user_id: '',

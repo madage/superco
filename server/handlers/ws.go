@@ -292,6 +292,15 @@ func (h *WSHub) HandleDashboardWS(c *gin.Context) {
 }
 
 func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
+	// Build set of currently active bus runtime node IDs
+	activeBusNodes := make(map[string]bool)
+	if h.Bus != nil {
+		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
+			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
+			activeBusNodes[nodeID] = true
+		}
+	}
+
 	// Fetch nodes for this user
 	nodes := make([]models.Node, 0)
 	rows, err := h.DB.Query(
@@ -303,6 +312,12 @@ func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
 		for rows.Next() {
 			var n models.Node
 			if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.LastSeen, &n.CreatedAt); err == nil {
+				// Skip bus virtual nodes that have no active runtime connection.
+				// These are stale DB records — either marked offline from a past clean
+				// disconnect, or stuck "online" from a killed process.
+				if strings.HasPrefix(n.ID, "bus-") && !activeBusNodes[n.ID] {
+					continue
+				}
 				nodes = append(nodes, n)
 			}
 		}
@@ -317,8 +332,7 @@ func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
 		for _, n := range nodes {
 			existing[n.ID] = true
 		}
-		busNodes := h.Bus.EndpointsByType(protocol.EndpointRuntime)
-		for _, ep := range busNodes {
+		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
 			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
 			if existing[nodeID] {
 				continue
@@ -344,9 +358,7 @@ func (h *WSHub) sendDashboardInit(nc *NodeConnection, userID string) {
 				CreatedAt: time.Now(),
 			})
 		}
-		if len(busNodes) > 0 {
-			log.Printf("[WS] Added %d bus runtime(s) to dashboard init", len(busNodes))
-		}
+
 	}
 
 	// Fetch sessions for this user

@@ -81,6 +81,15 @@ func (h *NodeHandler) Register(c *gin.Context) {
 func (h *NodeHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
+	// Build set of currently active bus runtime node IDs
+	activeBusNodes := make(map[string]bool)
+	if h.Bus != nil {
+		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
+			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
+			activeBusNodes[nodeID] = true
+		}
+	}
+
 	rows, err := h.DB.Query(
 		`SELECT id, user_id, name, os, arch, status, version, ip, max_sessions, last_seen, created_at
 		 FROM nodes WHERE user_id = $1 ORDER BY last_seen DESC`, userID,
@@ -97,11 +106,43 @@ func (h *NodeHandler) List(c *gin.Context) {
 		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.MaxSessions, &n.LastSeen, &n.CreatedAt); err != nil {
 			continue
 		}
+		// Skip bus virtual nodes that have no active runtime connection.
+		// These are stale DB records — either marked offline from a past clean
+		// disconnect, or stuck "online" from a killed process.
+		if strings.HasPrefix(n.ID, "bus-") && !activeBusNodes[n.ID] {
+			continue
+		}
 		nodes = append(nodes, n)
 	}
 
 	if nodes == nil {
 		nodes = []models.Node{}
+	}
+
+	// Inject active bus runtime endpoints that are not yet in the result
+	if h.Bus != nil {
+		existing := make(map[string]bool, len(nodes))
+		for _, n := range nodes {
+			existing[n.ID] = true
+		}
+		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
+			nodeID := "bus-" + strings.ReplaceAll(ep.ID, "://", "--")
+			if existing[nodeID] {
+				continue
+			}
+			nodes = append(nodes, models.Node{
+				ID:          nodeID,
+				UserID:      userID.(string),
+				Name:        "Runtime: " + ep.ID,
+				OS:          "unknown",
+				Status:      models.NodeStatusOnline,
+				Version:     "0.1.0",
+				IP:          "bus",
+				MaxSessions: 3,
+				LastSeen:    time.Now(),
+				CreatedAt:   time.Now(),
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})

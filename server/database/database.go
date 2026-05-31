@@ -129,6 +129,19 @@ func Migrate() error {
 		}
 	}
 
+	// Clean up offline bus virtual nodes that have no connected runtime
+	// These are stale DB records from previous connections or session FK upserts
+	cleanResult, err := DB.Exec(
+		`DELETE FROM nodes WHERE status = 'offline' AND id LIKE 'bus-%'`,
+	)
+	if err != nil {
+		log.Printf("[DB] Bus node cleanup warning: %v", err)
+	} else {
+		if n, _ := cleanResult.RowsAffected(); n > 0 {
+			log.Printf("[DB] Cleaned up %d offline bus node(s)", n)
+		}
+	}
+
 	return nil
 }
 
