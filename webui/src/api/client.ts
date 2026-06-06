@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, Project, CreateProjectReq, UpdateProjectReq } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, Project, CreateProjectReq, UpdateProjectReq, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq } from '../types';
 
 const BASE = '/api';
 
@@ -11,8 +11,19 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// List of path prefixes that should NOT get workspace_id appended
+const unscopedPrefixes = ['/workspaces', '/auth/', '/nodes', '/sessions', '/agents/runtimes'];
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  // Append workspace_id query param for scoped resources
+  const wsId = localStorage.getItem('workspace_id');
+  let url = `${BASE}${path}`;
+  if (wsId && !unscopedPrefixes.some(p => path.startsWith(p))) {
+    const separator = path.includes('?') ? '&' : '?';
+    url += `${separator}workspace_id=${encodeURIComponent(wsId)}`;
+  }
+
+  const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -32,13 +43,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // Auth
 export const auth = {
   login: (username: string, password: string) =>
-    request<{ token: string; user: { id: string; username: string } }>('/auth/login', {
+    request<{ token: string; user: { id: string; username: string }; workspace_id: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
 
   register: (username: string, password: string) =>
-    request<{ token: string; user: { id: string; username: string } }>('/auth/register', {
+    request<{ token: string; user: { id: string; username: string }; workspace_id: string }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
@@ -170,4 +181,18 @@ export const projects = {
 
   restore: (id: string) =>
     request<{ status: string }>(`/projects/${id}/restore`, { method: 'POST' }),
+};
+
+// Workspaces
+export const workspaces = {
+  list: () => request<{ workspaces: Workspace[] }>('/workspaces'),
+
+  create: (req: CreateWorkspaceReq) =>
+    request<Workspace>('/workspaces', { method: 'POST', body: JSON.stringify(req) }),
+
+  update: (id: string, req: UpdateWorkspaceReq) =>
+    request<Workspace>(`/workspaces/${id}`, { method: 'PUT', body: JSON.stringify(req) }),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/workspaces/${id}`, { method: 'DELETE' }),
 };

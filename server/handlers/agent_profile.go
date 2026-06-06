@@ -19,14 +19,20 @@ func NewAgentProfileHandler(db *sql.DB) *AgentProfileHandler {
 	return &AgentProfileHandler{DB: db}
 }
 
-// List returns all agent profiles for the current user.
 func (h *AgentProfileHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
-	rows, err := h.DB.Query(
-		`SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
-		 FROM agent_profiles WHERE user_id = $1 ORDER BY created_at ASC`, userID,
-	)
+	query := `SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
+		 FROM agent_profiles WHERE user_id = $1`
+	args := []any{userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $2`
+		args = append(args, workspaceID)
+	}
+	query += ` ORDER BY created_at ASC`
+
+	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query profiles"})
 		return
@@ -46,16 +52,21 @@ func (h *AgentProfileHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"profiles": profiles})
 }
 
-// Get returns a single agent profile by ID.
 func (h *AgentProfileHandler) Get(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	profileID := c.Param("id")
 
+	query := `SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
+		 FROM agent_profiles WHERE id = $1 AND user_id = $2`
+	args := []any{profileID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
 	var p models.AgentProfile
-	err := h.DB.QueryRow(
-		`SELECT id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at
-		 FROM agent_profiles WHERE id = $1 AND user_id = $2`, profileID, userID,
-	).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
+	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Avatar, &p.Description,
 		&p.AgentID, &p.Version, &p.Model, &p.Backend, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "profile not found"})
@@ -68,9 +79,9 @@ func (h *AgentProfileHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, p)
 }
 
-// Create creates a new agent profile.
 func (h *AgentProfileHandler) Create(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
 	var req struct {
 		Name        string `json:"name"`
@@ -95,9 +106,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 	_, err := h.DB.Exec(
-		`INSERT INTO agent_profiles (id, user_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, '', '', 'cli', true, $7, $7)`,
-		id, userID, req.Name, avatar, req.Description, req.AgentID, now,
+		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, agent_id, version, model, backend, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, '', '', 'cli', true, $8, $8)`,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.AgentID, now,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create profile"})
@@ -107,9 +118,9 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": id, "status": "created"})
 }
 
-// Update updates an existing agent profile.
 func (h *AgentProfileHandler) Update(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	profileID := c.Param("id")
 
 	var req struct {
@@ -124,7 +135,6 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Build dynamic update query
 	setClauses := []string{}
 	args := []interface{}{}
 	argIdx := 1
@@ -157,7 +167,11 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	}
 
 	setClauses = append(setClauses, "updated_at = NOW()")
-	args = append(args, profileID, userID)
+	whereArgs := []interface{}{profileID, userID}
+	if workspaceID != "" {
+		whereArgs = append(whereArgs, workspaceID)
+	}
+	args = append(args, whereArgs...)
 
 	query := "UPDATE agent_profiles SET "
 	for i, clause := range setClauses {
@@ -166,8 +180,11 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		}
 		query += clause
 	}
-	query += " WHERE id = $" + fmt.Sprint(argIdx) + " AND user_id = $" + fmt.Sprint(argIdx+1)
+	query += fmt.Sprintf(" WHERE id = $%d AND user_id = $%d", argIdx, argIdx+1)
 	argIdx += 2
+	if workspaceID != "" {
+		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+	}
 
 	result, err := h.DB.Exec(query, args...)
 	if err != nil {
@@ -181,14 +198,19 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
 }
 
-// Delete deletes an agent profile.
 func (h *AgentProfileHandler) Delete(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	profileID := c.Param("id")
 
-	result, err := h.DB.Exec(
-		`DELETE FROM agent_profiles WHERE id = $1 AND user_id = $2`, profileID, userID,
-	)
+	query := `DELETE FROM agent_profiles WHERE id = $1 AND user_id = $2`
+	args := []interface{}{profileID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete profile"})
 		return
@@ -200,14 +222,10 @@ func (h *AgentProfileHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
-// ListRuntimes returns available runtime agent entities (capabilities) for the dropdown.
 func (h *AgentProfileHandler) ListRuntimes(c *gin.Context) {
-	// Return known runtime capabilities that profiles can reference
-	// In the future this could query the message bus for active endpoints
 	runtimes := []gin.H{
 		{"id": "claude", "name": "Claude Code", "description": "AI programming assistant powered by Claude"},
 		{"id": "echo", "name": "Echo", "description": "Simple echo backend for testing"},
 	}
 	c.JSON(http.StatusOK, gin.H{"runtimes": runtimes})
 }
-

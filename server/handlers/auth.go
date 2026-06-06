@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/superco/server/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -52,9 +53,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// Get the user's default workspace
+	var wsID string
+	h.DB.QueryRow(`SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`, user.ID).Scan(&wsID)
+
 	c.JSON(http.StatusOK, models.LoginResp{
-		Token: token,
-		User:  user,
+		Token:       token,
+		User:        user,
+		WorkspaceID: wsID,
 	})
 }
 
@@ -82,13 +88,25 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Auto-create default workspace for new user
+	wsID := uuid.New().String()
+	h.DB.Exec(
+		`INSERT INTO workspaces (id, user_id, name, description, created_at, updated_at)
+		 VALUES ($1, $2, 'Default', 'Default workspace', NOW(), NOW())`,
+		wsID, user.ID,
+	)
+
 	token, err := h.generateToken(user.ID, user.Username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, models.LoginResp{Token: token, User: user})
+	c.JSON(http.StatusCreated, models.LoginResp{
+		Token:       token,
+		User:        user,
+		WorkspaceID: wsID,
+	})
 }
 
 func (h *AuthHandler) generateToken(userID, username string) (string, error) {

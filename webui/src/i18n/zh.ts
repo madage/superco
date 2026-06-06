@@ -153,6 +153,17 @@ export const zh = {
   you: '你',
   system: '系统',
 
+  // Workspaces
+  workspaceLabel: '工作区',
+  manageWorkspaces: '管理工作区',
+  addWorkspace: '添加工作区',
+  workspaceName: '工作区名称',
+  workspaceDescription: '工作区描述',
+  workspaceCreate: '创建工作区',
+  workspaceDelete: '删除工作区',
+  workspaceDeleteConfirm: '删除该工作区？任务和项目将成为未分配状态。',
+  workspaceDefaultName: '默认',
+
   // Language
   switchLang: 'English',
 } as const;

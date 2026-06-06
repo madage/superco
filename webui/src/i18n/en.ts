@@ -153,6 +153,17 @@ export const en = {
   you: 'You',
   system: 'System',
 
+  // Workspaces
+  workspaceLabel: 'Workspace',
+  manageWorkspaces: 'Manage Workspaces',
+  addWorkspace: 'Add Workspace',
+  workspaceName: 'Workspace Name',
+  workspaceDescription: 'Workspace Description',
+  workspaceCreate: 'Create Workspace',
+  workspaceDelete: 'Delete Workspace',
+  workspaceDeleteConfirm: 'Delete this workspace? Tasks and projects will become unassigned.',
+  workspaceDefaultName: 'Default',
+
   // Language
   switchLang: '中文',
 } as const;

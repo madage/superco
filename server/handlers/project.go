@@ -23,12 +23,21 @@ func NewProjectHandler(db *sql.DB) *ProjectHandler {
 
 func (h *ProjectHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
-	rows, err := h.DB.Query(
-		`SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
+	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.user_id = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, userID,
-	)
+		 FROM projects p WHERE p.user_id = $1 AND p.deleted_at IS NULL`
+	args := []any{userID}
+	argIdx := 2
+	if workspaceID != "" {
+		query += fmt.Sprintf(" AND p.workspace_id = $%d", argIdx)
+		args = append(args, workspaceID)
+		argIdx++
+	}
+	query += " ORDER BY p.updated_at DESC"
+
+	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query projects"})
 		return
@@ -49,6 +58,7 @@ func (h *ProjectHandler) List(c *gin.Context) {
 
 func (h *ProjectHandler) Create(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
 	var req models.CreateProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -73,9 +83,9 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO projects (id, user_id, name, description, color, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		project.ID, project.UserID, project.Name, project.Description, project.Color, project.CreatedAt, project.UpdatedAt,
+		`INSERT INTO projects (id, user_id, workspace_id, name, description, color, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		project.ID, project.UserID, workspaceID, project.Name, project.Description, project.Color, project.CreatedAt, project.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create project"})
@@ -90,14 +100,20 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 
 func (h *ProjectHandler) Get(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
-	var p models.Project
-	err := h.DB.QueryRow(
-		`SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
+	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.id = $1 AND p.user_id = $2`, projectID, userID,
-	).Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount)
+		 FROM projects p WHERE p.id = $1 AND p.user_id = $2`
+	args := []any{projectID, userID}
+	if workspaceID != "" {
+		query += ` AND p.workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	var p models.Project
+	err := h.DB.QueryRow(query, args...).Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Color, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
@@ -113,6 +129,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 
 func (h *ProjectHandler) Update(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
 	var req models.UpdateProjectReq
@@ -147,12 +164,19 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	}
 
 	sets = append(sets, "updated_at = NOW()")
-	args = append(args, projectID, userID)
+	whereArgs := []any{projectID, userID}
+	if workspaceID != "" {
+		whereArgs = append(whereArgs, workspaceID)
+	}
+	args = append(args, whereArgs...)
 
-	query := fmt.Sprintf(
-		`UPDATE projects SET %s WHERE id = $%d AND user_id = $%d`,
-		strings.Join(sets, ", "), argIdx, argIdx+1,
-	)
+	whereClause := fmt.Sprintf("WHERE id = $%d AND user_id = $%d", argIdx, argIdx+1)
+	argIdx += 2
+	if workspaceID != "" {
+		whereClause += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+	}
+
+	query := fmt.Sprintf("UPDATE projects SET %s %s", strings.Join(sets, ", "), whereClause)
 
 	result, err := h.DB.Exec(query, args...)
 	if err != nil {
@@ -180,11 +204,17 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 
 func (h *ProjectHandler) Delete(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
-	result, err := h.DB.Exec(
-		`UPDATE projects SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`, projectID, userID,
-	)
+	query := `UPDATE projects SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
+	args := []any{projectID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete project"})
 		return
@@ -203,12 +233,19 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 
 func (h *ProjectHandler) ListTrash(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
-	rows, err := h.DB.Query(
-		`SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
+	query := `SELECT p.id, p.user_id, p.name, p.description, p.color, p.created_at, p.updated_at,
 		        COALESCE((SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL), 0) AS task_count
-		 FROM projects p WHERE p.user_id = $1 AND p.deleted_at IS NOT NULL ORDER BY p.updated_at DESC`, userID,
-	)
+		 FROM projects p WHERE p.user_id = $1 AND p.deleted_at IS NOT NULL`
+	args := []any{userID}
+	if workspaceID != "" {
+		query += ` AND p.workspace_id = $2`
+		args = append(args, workspaceID)
+	}
+	query += " ORDER BY p.updated_at DESC"
+
+	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query project trash"})
 		return
@@ -229,14 +266,26 @@ func (h *ProjectHandler) ListTrash(c *gin.Context) {
 
 func (h *ProjectHandler) PermanentDelete(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
 	// Unlink tasks from this project first
-	_, _ = h.DB.Exec(`UPDATE tasks SET project_id = NULL WHERE project_id = $1 AND user_id = $2`, projectID, userID)
+	unlinkQuery := `UPDATE tasks SET project_id = NULL WHERE project_id = $1 AND user_id = $2`
+	unlinkArgs := []any{projectID, userID}
+	if workspaceID != "" {
+		unlinkQuery += ` AND workspace_id = $3`
+		unlinkArgs = append(unlinkArgs, workspaceID)
+	}
+	_, _ = h.DB.Exec(unlinkQuery, unlinkArgs...)
 
-	result, err := h.DB.Exec(
-		`DELETE FROM projects WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`, projectID, userID,
-	)
+	query := `DELETE FROM projects WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`
+	args := []any{projectID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to permanently delete project"})
 		return
@@ -255,11 +304,17 @@ func (h *ProjectHandler) PermanentDelete(c *gin.Context) {
 
 func (h *ProjectHandler) Restore(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	projectID := c.Param("id")
 
-	result, err := h.DB.Exec(
-		`UPDATE projects SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`, projectID, userID,
-	)
+	query := `UPDATE projects SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`
+	args := []any{projectID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to restore project"})
 		return

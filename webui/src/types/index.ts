@@ -126,8 +126,29 @@ export interface UpdateTaskReq {
   project_id?: string | null;
 }
 
+// === Workspace Types ===
+export interface Workspace {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorkspaceReq {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateWorkspaceReq {
+  name?: string;
+  description?: string;
+}
+
 // === Auth Types ===
 export interface AuthState {
   token: string | null;
   user: { id: string; username: string } | null;
+  workspace_id: string | null;
 }

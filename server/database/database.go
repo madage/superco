@@ -137,6 +137,16 @@ func Migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+
+	CREATE TABLE IF NOT EXISTS workspaces (
+		id          VARCHAR(36) PRIMARY KEY,
+		user_id     VARCHAR(36) NOT NULL REFERENCES users(id),
+		name        VARCHAR(128) NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+		updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON workspaces(user_id);
 	`
 
 	_, err := DB.Exec(schema)
@@ -150,8 +160,14 @@ func Migrate() error {
 		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS agent_id VARCHAR(36)",
 		"ALTER TABLE sessions ALTER COLUMN prompt DROP NOT NULL",
 		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
-			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id VARCHAR(36) REFERENCES projects(id)",
-			"CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id VARCHAR(36) REFERENCES projects(id)",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)",
+		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(36) REFERENCES workspaces(id)",
+		"ALTER TABLE projects ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(36) REFERENCES workspaces(id)",
+		"ALTER TABLE agent_profiles ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(36) REFERENCES workspaces(id)",
+		"CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id)",
+		"CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id)",
+		"CREATE INDEX IF NOT EXISTS idx_agent_profiles_workspace_id ON agent_profiles(workspace_id)",
 	}
 	for _, a := range alterations {
 		if _, err := DB.Exec(a); err != nil {
@@ -162,7 +178,6 @@ func Migrate() error {
 	log.Println("[DB] Migrations completed")
 
 	// Clean up stale sessions from previous server run
-	// Mark running/pending sessions as failed since the server restarted
 	staleResult, err := DB.Exec(
 		`UPDATE sessions SET status = 'failed', error_log = 'server restarted', updated_at = NOW(), completed_at = NOW()
 		 WHERE status IN ('running', 'pending')`,
@@ -175,8 +190,7 @@ func Migrate() error {
 		}
 	}
 
-	// Clean up offline bus virtual nodes that have no connected runtime
-	// These are stale DB records from previous connections or session FK upserts
+	// Clean up offline bus virtual nodes
 	cleanResult, err := DB.Exec(
 		`DELETE FROM nodes WHERE status = 'offline' AND id LIKE 'bus-%'`,
 	)
@@ -188,7 +202,37 @@ func Migrate() error {
 		}
 	}
 
+	backfillWorkspaces()
 	return nil
+}
+
+func backfillWorkspaces() {
+	rows, err := DB.Query(`SELECT DISTINCT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.user_id = u.id)`)
+	if err != nil {
+		log.Printf("[DB] Failed to query users for workspace backfill: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			continue
+		}
+		_, err := DB.Exec(
+			`INSERT INTO workspaces (id, user_id, name, description, created_at, updated_at)
+			 VALUES (gen_random_uuid()::text, $1, 'Default', 'Default workspace', NOW(), NOW())`,
+			userID,
+		)
+		if err != nil {
+			log.Printf("[DB] Failed to create default workspace for user %s: %v", userID, err)
+			continue
+		}
+		DB.Exec(`UPDATE tasks SET workspace_id = (SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1) WHERE user_id = $1 AND workspace_id IS NULL`, userID)
+		DB.Exec(`UPDATE projects SET workspace_id = (SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1) WHERE user_id = $1 AND workspace_id IS NULL`, userID)
+		DB.Exec(`UPDATE agent_profiles SET workspace_id = (SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1) WHERE user_id = $1 AND workspace_id IS NULL`, userID)
+		log.Printf("[DB] Backfilled default workspace for user %s", userID)
+	}
 }
 
 func Close() {

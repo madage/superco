@@ -42,6 +42,8 @@ func main() {
 	taskH.Hub = dashHub
 	projectH := handlers.NewProjectHandler(database.DB)
 	projectH.Hub = dashHub
+	workspaceH := handlers.NewWorkspaceHandler(database.DB)
+	workspaceH.Hub = dashHub
 	busH.Hub = dashHub // link for dashboard broadcasting
 
 	// Router
@@ -111,6 +113,13 @@ func main() {
 		api.DELETE("/projects/:id", projectH.Delete)
 		api.DELETE("/projects/:id/force", projectH.PermanentDelete)
 		api.POST("/projects/:id/restore", projectH.Restore)
+
+		// Workspaces
+		api.GET("/workspaces", workspaceH.List)
+		api.POST("/workspaces", workspaceH.Create)
+		api.GET("/workspaces/:id", workspaceH.Get)
+		api.PUT("/workspaces/:id", workspaceH.Update)
+		api.DELETE("/workspaces/:id", workspaceH.Delete)
 
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)

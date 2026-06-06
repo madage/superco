@@ -15,6 +15,7 @@ type LoginReq struct {
 }
 
 type LoginResp struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
+	Token       string `json:"token"`
+	User        User   `json:"user"`
+	WorkspaceID string `json:"workspace_id"`
 }

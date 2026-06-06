@@ -24,11 +24,18 @@ func NewTaskHandler(db *sql.DB) *TaskHandler {
 
 func (h *TaskHandler) List(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
 	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
 		 FROM tasks WHERE user_id = $1 AND deleted_at IS NULL`
 	args := []any{userID}
 	argIdx := 2
+
+	if workspaceID != "" {
+		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+		args = append(args, workspaceID)
+		argIdx++
+	}
 
 	if projectID := c.Query("project_id"); projectID != "" {
 		if projectID == "none" {
@@ -63,6 +70,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 func (h *TaskHandler) Create(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
 	var req models.CreateTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -83,9 +91,9 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO tasks (id, user_id, title, description, status, project_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		task.ID, task.UserID, task.Title, task.Description, task.Status, task.ProjectID, task.CreatedAt, task.UpdatedAt,
+		`INSERT INTO tasks (id, user_id, workspace_id, title, description, status, project_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		task.ID, task.UserID, workspaceID, task.Title, task.Description, task.Status, task.ProjectID, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
@@ -100,13 +108,21 @@ func (h *TaskHandler) Create(c *gin.Context) {
 
 func (h *TaskHandler) Get(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
+	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
+		 FROM tasks WHERE id = $1 AND user_id = $2`
+	args := []any{taskID, userID}
+	argIdx := 3
+
+	if workspaceID != "" {
+		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+		args = append(args, workspaceID)
+	}
+
 	var t models.Task
-	err := h.DB.QueryRow(
-		`SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE id = $1 AND user_id = $2`, taskID, userID,
-	).Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt)
+	err := h.DB.QueryRow(query, args...).Scan(&t.ID, &t.UserID, &t.Title, &t.Description, &t.Status, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
@@ -122,6 +138,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 func (h *TaskHandler) Update(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
 	bodyBytes, err := c.GetRawData()
@@ -179,12 +196,19 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	}
 
 	sets = append(sets, "updated_at = NOW()")
-	args = append(args, taskID, userID)
+	whereArgs := []any{taskID, userID}
+	if workspaceID != "" {
+		whereArgs = append(whereArgs, workspaceID)
+	}
+	args = append(args, whereArgs...)
 
-	query := fmt.Sprintf(
-		`UPDATE tasks SET %s WHERE id = $%d AND user_id = $%d`,
-		strings.Join(sets, ", "), argIdx, argIdx+1,
-	)
+	whereClause := fmt.Sprintf("WHERE id = $%d AND user_id = $%d", argIdx, argIdx+1)
+	argIdx += 2
+	if workspaceID != "" {
+		whereClause += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
+	}
+
+	query := fmt.Sprintf("UPDATE tasks SET %s %s", strings.Join(sets, ", "), whereClause)
 
 	result, err := h.DB.Exec(query, args...)
 	if err != nil {
@@ -212,11 +236,17 @@ func (h *TaskHandler) Update(c *gin.Context) {
 
 func (h *TaskHandler) Delete(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	result, err := h.DB.Exec(
-		`UPDATE tasks SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`, taskID, userID,
-	)
+	query := `UPDATE tasks SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
+	args := []any{taskID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete task"})
 		return
@@ -235,11 +265,18 @@ func (h *TaskHandler) Delete(c *gin.Context) {
 
 func (h *TaskHandler) ListTrash(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 
-	rows, err := h.DB.Query(
-		`SELECT id, user_id, title, description, status, project_id, created_at, updated_at
-		 FROM tasks WHERE user_id = $1 AND deleted_at IS NOT NULL ORDER BY updated_at DESC`, userID,
-	)
+	query := `SELECT id, user_id, title, description, status, project_id, created_at, updated_at
+		 FROM tasks WHERE user_id = $1 AND deleted_at IS NOT NULL`
+	args := []any{userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $2`
+		args = append(args, workspaceID)
+	}
+	query += ` ORDER BY updated_at DESC`
+
+	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query trash"})
 		return
@@ -260,11 +297,17 @@ func (h *TaskHandler) ListTrash(c *gin.Context) {
 
 func (h *TaskHandler) PermanentDelete(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	result, err := h.DB.Exec(
-		`DELETE FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`, taskID, userID,
-	)
+	query := `DELETE FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`
+	args := []any{taskID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to permanently delete task"})
 		return
@@ -283,11 +326,17 @@ func (h *TaskHandler) PermanentDelete(c *gin.Context) {
 
 func (h *TaskHandler) Restore(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
-	result, err := h.DB.Exec(
-		`UPDATE tasks SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`, taskID, userID,
-	)
+	query := `UPDATE tasks SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`
+	args := []any{taskID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $3`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to restore task"})
 		return
@@ -306,6 +355,7 @@ func (h *TaskHandler) Restore(c *gin.Context) {
 
 func (h *TaskHandler) SetStatus(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	workspaceID := c.Query("workspace_id")
 	taskID := c.Param("id")
 
 	var req models.SetStatusReq
@@ -321,10 +371,14 @@ func (h *TaskHandler) SetStatus(c *gin.Context) {
 		return
 	}
 
-	result, err := h.DB.Exec(
-		`UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`,
-		req.Status, taskID, userID,
-	)
+	query := `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`
+	args := []any{req.Status, taskID, userID}
+	if workspaceID != "" {
+		query += ` AND workspace_id = $4`
+		args = append(args, workspaceID)
+	}
+
+	result, err := h.DB.Exec(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update status"})
 		return
