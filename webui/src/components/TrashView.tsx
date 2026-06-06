@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { tasks as tasksApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
-import type { Task, TaskStatus } from '../types';
+import type { Task, TaskStatus, Project } from '../types';
 
 const statusKeys: Record<TaskStatus, string> = {
   todo: 'taskStatusTodo',
@@ -23,6 +23,7 @@ const statusColors: Record<TaskStatus, { bg: string; color: string }> = {
 export function TrashView() {
   const { t, lang } = useLang();
   const [trashList, setTrashList] = useState<Task[]>([]);
+  const [projectTrash, setProjectTrash] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Permanent delete verification
@@ -38,8 +39,12 @@ export function TrashView() {
 
   const fetchTrash = useCallback(async () => {
     try {
-      const res = await tasksApi.listTrash();
-      setTrashList(res.tasks);
+      const [taskRes, projectRes] = await Promise.all([
+        tasksApi.listTrash(),
+        projectsApi.listTrash(),
+      ]);
+      setTrashList(taskRes.tasks);
+      setProjectTrash(projectRes.projects);
     } catch {
       // silently fail
     } finally {
@@ -52,6 +57,7 @@ export function TrashView() {
   }, [fetchTrash]);
 
   useResourceSync('tasks', fetchTrash);
+  useResourceSync('projects', fetchTrash);
 
   const handleRestore = useCallback(async (id: string) => {
     try {
@@ -59,6 +65,15 @@ export function TrashView() {
       setTrashList((prev) => prev.filter((t) => t.id !== id));
     } catch {
       alert('Failed to restore task');
+    }
+  }, []);
+
+  const handleProjectRestore = useCallback(async (id: string) => {
+    try {
+      await projectsApi.restore(id);
+      setProjectTrash((prev) => prev.filter((p) => p.id !== id));
+    } catch {
+      alert('Failed to restore project');
     }
   }, []);
 

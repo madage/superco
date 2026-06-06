@@ -3,6 +3,7 @@ import { useMessageBus, type Envelope, type ContentBlock } from './hooks/useMess
 import { NodeList } from './components/NodeList';
 import { AgentList } from './components/AgentList';
 import { TaskBoard } from './components/TaskBoard';
+import { ProjectList } from './components/ProjectList';
 import { TrashView } from './components/TrashView';
 import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
@@ -11,7 +12,7 @@ import { useLang } from './i18n/context';
 import { auth as authApi } from './api/client';
 import type { Node, Session, AuthState } from './types';
 
-type Page = 'nodes' | 'tasks' | 'agents' | 'trash';
+type Page = 'nodes' | 'tasks' | 'projects' | 'agents' | 'trash';
 
 function App() {
   const { t, lang } = useLang();
@@ -234,7 +235,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'tasks', 'agents', 'trash'] as Page[]).map((p) => (
+          {(['nodes', 'tasks', 'projects', 'agents', 'trash'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -252,9 +253,9 @@ function App() {
               }}
             >
               <span style={{ display: 'inline-block', width: '24px', textAlign: 'center', marginRight: '4px' }}>
-                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'agents' ? '🤖' : '🗑'}
+                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : '🗑'}
               </span>
-              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'agents' ? t('agents') : t('navTrash')}
+              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : t('navTrash')}
             </button>
           ))}
         </nav>
@@ -321,6 +322,11 @@ function App() {
         {/* Tasks page */}
         <div style={{ display: page === 'tasks' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
           <TaskBoard />
+        </div>
+
+        {/* Projects page */}
+        <div style={{ display: page === 'projects' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <ProjectList />
         </div>
 
         {/* Trash page */}

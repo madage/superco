@@ -124,6 +124,19 @@ func Migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 	CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+
+	CREATE TABLE IF NOT EXISTS projects (
+		id          VARCHAR(36) PRIMARY KEY,
+		user_id     VARCHAR(36) NOT NULL REFERENCES users(id),
+		name        VARCHAR(255) NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		color       VARCHAR(7) NOT NULL DEFAULT '#1976d2',
+		created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+		updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+		deleted_at  TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
 	`
 
 	_, err := DB.Exec(schema)
@@ -137,6 +150,8 @@ func Migrate() error {
 		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS agent_id VARCHAR(36)",
 		"ALTER TABLE sessions ALTER COLUMN prompt DROP NOT NULL",
 		"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id VARCHAR(36) REFERENCES projects(id)",
+			"CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)",
 	}
 	for _, a := range alterations {
 		if _, err := DB.Exec(a); err != nil {

@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, Project, CreateProjectReq, UpdateProjectReq } from '../types';
 
 const BASE = '/api';
 
@@ -119,7 +119,10 @@ export const sessions = {
 
 // Tasks
 export const tasks = {
-  list: () => request<{ tasks: Task[] }>('/tasks'),
+  list: (projectId?: string) => {
+    const path = projectId ? `/tasks?project_id=${projectId}` : '/tasks';
+    return request<{ tasks: Task[] }>(path);
+  },
 
   get: (id: string) => request<Task>(`/tasks/${id}`),
 
@@ -143,4 +146,28 @@ export const tasks = {
 
   restore: (id: string) =>
     request<{ status: string }>(`/tasks/${id}/restore`, { method: 'POST' }),
+};
+
+// Projects
+export const projects = {
+  list: () => request<{ projects: Project[] }>('/projects'),
+
+  get: (id: string) => request<Project>(`/projects/${id}`),
+
+  create: (req: CreateProjectReq) =>
+    request<Project>('/projects', { method: 'POST', body: JSON.stringify(req) }),
+
+  update: (id: string, req: UpdateProjectReq) =>
+    request<Project>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(req) }),
+
+  delete: (id: string) =>
+    request<{ status: string }>(`/projects/${id}`, { method: 'DELETE' }),
+
+  listTrash: () => request<{ projects: Project[] }>('/projects/trash'),
+
+  permanentDelete: (id: string) =>
+    request<{ status: string }>(`/projects/${id}/force`, { method: 'DELETE' }),
+
+  restore: (id: string) =>
+    request<{ status: string }>(`/projects/${id}/restore`, { method: 'POST' }),
 };

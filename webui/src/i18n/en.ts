@@ -65,6 +65,15 @@ export const en = {
   sessionFailed: '[Session failed: ',
   unknownError: 'unknown error',
 
+  // Projects
+  navProjects: 'Projects',
+  projectCreate: 'Create Project',
+  projectName: 'Name',
+  projectDescription: 'Description',
+  projectColor: 'Color',
+  projectEmpty: 'No projects yet',
+  noProject: 'No Project',
+
   // Tasks
   navTasks: 'Tasks',
   navTrash: 'Trash',

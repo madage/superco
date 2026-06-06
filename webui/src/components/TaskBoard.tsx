@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useLang, type TranslationKey } from '../i18n/context';
-import { tasks as tasksApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
 import { TaskCard } from './TaskCard';
 import { TaskForm } from './TaskForm';
@@ -31,6 +31,8 @@ export function TaskBoard() {
   const [view, setView] = useState<'kanban' | 'list'>('kanban');
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [filterProjectId, setFilterProjectId] = useState<string>("");
+  const [projects, setProjects] = useState<{ id: string; name: string; color: string }[]>([]);
 
   // Delete verification state
   const [deleteVerify, setDeleteVerify] = useState<{
@@ -43,9 +45,9 @@ export function TaskBoard() {
   const [verifyInput, setVerifyInput] = useState('');
   const [verifyError, setVerifyError] = useState(false);
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (projectFilter?: string) => {
     try {
-      const res = await tasksApi.list();
+      const res = await tasksApi.list(projectFilter || undefined);
       setTaskList(res.tasks);
     } catch {
       // silently fail
@@ -58,6 +60,14 @@ export function TaskBoard() {
     fetchTasks();
   }, [fetchTasks]);
 
+  useEffect(() => {
+    fetchTasks(filterProjectId || undefined);
+  }, [filterProjectId, fetchTasks]);
+
+  useEffect(() => {
+    projectsApi.list().then((res) => setProjects(res.projects)).catch(() => {});
+  }, []);
+
   useResourceSync('tasks', fetchTasks);
 
   const grouped = taskList.reduce(
@@ -69,9 +79,9 @@ export function TaskBoard() {
     {} as Record<string, Task[]>,
   );
 
-  const handleCreate = useCallback(async (data: { title: string; description: string }) => {
+  const handleCreate = useCallback(async (data: { title: string; description: string; project_id?: string | null }) => {
     try {
-      await tasksApi.create({ title: data.title, description: data.description || undefined });
+      await tasksApi.create({ title: data.title, description: data.description || undefined, project_id: data.project_id || undefined });
       setShowForm(false);
       fetchTasks();
     } catch {
@@ -79,13 +89,18 @@ export function TaskBoard() {
     }
   }, [fetchTasks]);
 
-  const handleUpdate = useCallback(async (data: { title: string; description: string; status?: TaskStatus }) => {
+  useEffect(() => {
+    fetchTasks(filterProjectId || undefined);
+  }, [filterProjectId, fetchTasks]);
+
+  const handleUpdate = useCallback(async (data: { title: string; description: string; status?: TaskStatus; project_id?: string | null }) => {
     if (!editingTask) return;
     try {
-      const updateData: { title?: string; description?: string; status?: TaskStatus } = {};
+      const updateData: { title?: string; description?: string; status?: TaskStatus; project_id?: string } = {};
       if (data.title !== editingTask.title) updateData.title = data.title;
       if (data.description !== editingTask.description) updateData.description = data.description;
       if (data.status && data.status !== editingTask.status) updateData.status = data.status;
+      if (data.project_id !== undefined && data.project_id !== editingTask.project_id) updateData.project_id = data.project_id || undefined;
       if (Object.keys(updateData).length > 0) {
         await tasksApi.update(editingTask.id, updateData);
       }
@@ -147,6 +162,24 @@ export function TaskBoard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h2 style={{ margin: 0 }}>{t('navTasks')}</h2>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Project filter */}
+          <select
+            value={filterProjectId}
+            onChange={(e) => setFilterProjectId(e.target.value)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: "6px",
+              border: "1px solid #ddd",
+              fontSize: "0.85em",
+              background: "#fff",
+              maxWidth: "140px",
+            }}
+          >
+            <option value="">{t("noProject")}</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
           {/* View toggle */}
           <div style={{ display: 'flex', borderRadius: '6px', overflow: 'hidden', border: '1px solid #ddd' }}>
             <button
@@ -244,6 +277,7 @@ export function TaskBoard() {
                       onEdit={(t) => setEditingTask(t)}
                       onDelete={handleDelete}
                       onStatusChange={handleStatusChange}
+                      projectsMap={Object.fromEntries(projects.map(p => [p.id, { name: p.name, color: p.color }]))}
                     />
                   ))}
                 </div>

@@ -40,6 +40,8 @@ func main() {
 	profileH := handlers.NewAgentProfileHandler(database.DB)
 	taskH := handlers.NewTaskHandler(database.DB)
 	taskH.Hub = dashHub
+	projectH := handlers.NewProjectHandler(database.DB)
+	projectH.Hub = dashHub
 	busH.Hub = dashHub // link for dashboard broadcasting
 
 	// Router
@@ -100,6 +102,15 @@ func main() {
 		api.DELETE("/tasks/:id/force", taskH.PermanentDelete)
 		api.POST("/tasks/:id/restore", taskH.Restore)
 		api.PATCH("/tasks/:id/status", taskH.SetStatus)
+		// Projects
+		api.GET("/projects", projectH.List)
+		api.POST("/projects", projectH.Create)
+		api.GET("/projects/trash", projectH.ListTrash)
+		api.GET("/projects/:id", projectH.Get)
+		api.PUT("/projects/:id", projectH.Update)
+		api.DELETE("/projects/:id", projectH.Delete)
+		api.DELETE("/projects/:id/force", projectH.PermanentDelete)
+		api.POST("/projects/:id/restore", projectH.Restore)
 
 		api.POST("/sessions", sessionH.Create)
 		api.GET("/sessions", sessionH.List)

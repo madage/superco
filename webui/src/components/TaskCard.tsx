@@ -25,9 +25,10 @@ interface TaskCardProps {
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
   onStatusChange: (id: string, status: TaskStatus) => void;
+  projectsMap?: Record<string, { name: string; color: string }>;
 }
 
-export function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardProps) {
+export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap }: TaskCardProps) {
   const { t } = useLang();
   const sc = statusColors[task.status];
   const [menuOpen, setMenuOpen] = useState(false);
@@ -69,7 +70,7 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardPro
         e.currentTarget.style.boxShadow = '';
       }}
     >
-      {/* Top row: menu + status badge */}
+      {/* Top row: menu + project dot + status badge */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div ref={menuRef} style={{ position: 'relative' }}>
           <button
@@ -149,19 +150,31 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange }: TaskCardPro
           )}
         </div>
 
-        <span
-          style={{
-            fontSize: '0.75em',
-            padding: '2px 8px',
-            borderRadius: '10px',
-            background: sc.bg,
-            color: sc.color,
-            fontWeight: 500,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {t(statusKeys[task.status])}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {task.project_id && projectsMap?.[task.project_id] && (
+            <span
+              title={projectsMap[task.project_id].name}
+              style={{
+                width: '8px', height: '8px', borderRadius: '50%',
+                background: projectsMap[task.project_id].color,
+                display: 'inline-block', flexShrink: 0,
+              }}
+            />
+          )}
+          <span
+            style={{
+              fontSize: '0.75em',
+              padding: '2px 8px',
+              borderRadius: '10px',
+              background: sc.bg,
+              color: sc.color,
+              fontWeight: 500,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t(statusKeys[task.status])}
+          </span>
+        </div>
       </div>
 
       {/* Title */}

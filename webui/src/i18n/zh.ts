@@ -65,6 +65,15 @@ export const zh = {
   sessionFailed: '[会话执行失败：',
   unknownError: '未知错误',
 
+  // Projects
+  navProjects: '项目',
+  projectCreate: '创建项目',
+  projectName: '项目名称',
+  projectDescription: '项目描述',
+  projectColor: '颜色',
+  projectEmpty: '还没有项目',
+  noProject: '无项目',
+
   // Tasks
   navTasks: '任务',
   navTrash: '回收站',

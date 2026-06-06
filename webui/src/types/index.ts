@@ -75,6 +75,30 @@ export interface CreateSessionReq {
   agent_id: string;
 }
 
+// === Project Types ===
+export interface Project {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string;
+  color: string;
+  task_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProjectReq {
+  name: string;
+  description?: string;
+  color?: string;
+}
+
+export interface UpdateProjectReq {
+  name?: string;
+  description?: string;
+  color?: string;
+}
+
 // === Task Types ===
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'review';
 
@@ -84,6 +108,7 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  project_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -91,12 +116,14 @@ export interface Task {
 export interface CreateTaskReq {
   title: string;
   description?: string;
+  project_id?: string;
 }
 
 export interface UpdateTaskReq {
   title?: string;
   description?: string;
   status?: TaskStatus;
+  project_id?: string;
 }
 
 // === Auth Types ===
