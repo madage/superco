@@ -301,6 +301,34 @@ func (h *BusHandler) handleSessionJoin(env *protocol.Envelope) {
 		return
 	}
 
+	// If the joining endpoint is a UI and the session has no runtime, invite available runtimes
+	addr := protocol.ParseAddr(env.From)
+	if addr.Type == protocol.EndpointUI {
+		sess := h.Bus.GetSession(env.SessionID)
+		hasRuntime := false
+		if sess != nil {
+			for memberID := range sess.Members {
+				maddr := protocol.ParseAddr(memberID)
+				if maddr.Type == protocol.EndpointRuntime {
+					hasRuntime = true
+					break
+				}
+			}
+		}
+		if !hasRuntime {
+			for _, rt := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
+				forward := protocol.NewEnvelope("system://bus", rt.ID, protocol.MsgSessionCreate,
+					&protocol.Payload{
+						Agents: []protocol.AgentSpec{{ID: "claude"}},
+					},
+				)
+				forward.SessionID = env.SessionID
+				h.Bus.Deliver(forward)
+				log.Printf("[Bus] Forwarded session.create to runtime %s for session %s", rt.ID, env.SessionID)
+			}
+		}
+	}
+
 	joined := protocol.NewEnvelope("system://bus", "session://"+env.SessionID,
 		protocol.MsgSessionJoined, &protocol.Payload{
 			Members: []protocol.MemberSpec{
