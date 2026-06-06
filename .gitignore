@@ -55,6 +55,11 @@ credentials.json
 service-account.json
 
 # === Docs ===
+doc/
+docs/
+documents/
+文档/
+技术文档/
 产品说明/
 
 # === Logs ===
