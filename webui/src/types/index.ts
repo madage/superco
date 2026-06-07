@@ -381,6 +381,30 @@ export interface UpdateRuleReq {
   enabled?: boolean;
 }
 
+// === Agent Queue Types ===
+export interface AgentQueueItem {
+  id: string;
+  task_id: string;
+  agent_profile_id: string;
+  status: 'queued' | 'claimed' | 'processing' | 'completed' | 'failed';
+  assigned_at?: string;
+  claimed_at?: string;
+  completed_at?: string;
+  result_summary: string;
+  snapshot?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AgentLoadInfo {
+  id: string;
+  name: string;
+  avatar: string;
+  description: string;
+  max_concurrency: number;
+  current_load: number;
+  available: boolean;
+}
+
 // === User Management ===
 export interface UserSummary {
   id: string;

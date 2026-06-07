@@ -9,6 +9,7 @@ import { TrashView } from './components/TrashView';
 import { PluginList } from './components/PluginList';
 import { RuleList } from './components/RuleList';
 import { SkillList } from './components/SkillList';
+import { AgentQueuePanel } from './components/AgentQueuePanel';
 import { FloatingChat } from './components/FloatingChat';
 import { LangSwitcher } from './components/LangSwitcher';
 import WorkspaceMembers from './components/WorkspaceMembers';
@@ -21,7 +22,7 @@ import type { Node, Session, AuthState, Workspace, WorkspaceRole, WorkspaceMembe
 import WorkspaceContext from './hooks/WorkspaceContext';
 import { pluginClient } from './plugin/PluginClient';
 
-type Page = 'nodes' | 'tasks' | 'rules' | 'projects' | 'agents' | 'skills' | 'plugins' | 'trash';
+type Page = 'nodes' | 'tasks' | 'rules' | 'projects' | 'agents' | 'skills' | 'agent-queue' | 'plugins' | 'trash';
 
 function App() {
   const { t, lang } = useLang();
@@ -539,7 +540,7 @@ function App() {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px' }}>
-          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'skills', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => (
+          {(['nodes', 'tasks', 'rules', 'projects', 'agents', 'skills', 'agent-queue', ...(auth.workspace_role === 'owner' || auth.workspace_role === 'admin' ? ['plugins'] : []), 'trash'] as Page[]).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
@@ -557,9 +558,9 @@ function App() {
               }}
             >
               <span style={{ display: 'inline-block', width: '24px', textAlign: 'center', marginRight: '4px' }}>
-                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'skills' ? '📚' : p === 'plugins' ? '🧩' : '🗑'}
+                {p === 'nodes' ? '📡' : p === 'tasks' ? '📋' : p === 'projects' ? '📁' : p === 'agents' ? '🤖' : p === 'rules' ? '⚡' : p === 'skills' ? '📚' : p === 'agent-queue' ? '⏳' : p === 'plugins' ? '🧩' : '🗑'}
               </span>
-              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'skills' ? t('navSkills') : p === 'plugins' ? t('navPlugins') : t('navTrash')}
+              {p === 'nodes' ? t('navNodes') : p === 'tasks' ? t('navTasks') : p === 'projects' ? t('navProjects') : p === 'agents' ? t('agents') : p === 'rules' ? t('navAutomation') : p === 'skills' ? t('navSkills') : p === 'agent-queue' ? t('navAgentQueue') || 'Queue' : p === 'plugins' ? t('navPlugins') : t('navTrash')}
             </button>
           ))}
         </nav>
@@ -670,6 +671,11 @@ function App() {
         {/* Skills page */}
         <div style={{ display: page === 'skills' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
           <SkillList key={workspaceKey} />
+        </div>
+
+        {/* Agent Queue page */}
+        <div style={{ display: page === 'agent-queue' ? 'block' : 'none', height: '100%', overflow: 'auto' }}>
+          <AgentQueuePanel key={workspaceKey} />
         </div>
 
         {/* Plugins page */}

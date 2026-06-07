@@ -86,6 +86,9 @@ func main() {
 	skillH := handlers.NewSkillHandler(database.DB)
 	skillH.Hub = dashHub
 
+	agentSched := handlers.NewAgentScheduler(database.DB)
+	agentSched.Hub = dashHub
+
 	taskH := handlers.NewTaskHandler(database.DB)
 
 	taskH.Hub = dashHub
@@ -276,6 +279,12 @@ func main() {
 		api.PUT("/skills/:id", skillH.Update)
 		api.DELETE("/skills/:id", skillH.Delete)
 		api.POST("/skills/extract-from-task", skillH.ExtractFromTask)
+			// Agent Queue & Scheduler
+			api.GET("/agents/queue", agentSched.List)
+			api.POST("/agents/auto-assign/:taskId", agentSched.AutoAssign)
+			api.POST("/agents/queue/:id/claim", agentSched.Claim)
+			api.PUT("/agents/queue/:id/status", agentSched.UpdateStatus)
+			api.GET("/agents/queue/agents", agentSched.ListAgentsWithLoad)
 
 		// Projects
 

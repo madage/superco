@@ -624,6 +624,7 @@ export const en = {
   skillTaskId: 'Task ID',
   skillTaskIdPlaceholder: 'Enter task ID...',
   navSkills: 'Skills',
+  navAgentQueue: 'Queue',
 
   // Agent Profile Enhancement
 
@@ -640,6 +641,15 @@ export const en = {
   agentLoad: 'Load',
 
   agentLoadInfo: '{current}/{max} tasks running',
+
+  // Agent Queue
+  agentQueue: 'Agent Queue',
+  agentQueueEmpty: 'No queued tasks.',
+  agentQueueQueued: 'Queued',
+  agentQueueClaimed: 'Claimed',
+  agentQueueProcessing: 'Processing',
+  agentQueueCompleted: 'Completed',
+  agentQueueFailed: 'Failed',
 
 } as const;
 

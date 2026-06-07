@@ -1,4 +1,4 @@
-import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq } from '../types';
+import type { Node, Session, CreateSessionReq, Agent, AgentProfile, RuntimeEntity, Task, CreateTaskReq, UpdateTaskReq, TaskStatus, TaskAssignee, AddAssigneeReq, Priority, Project, CreateProjectReq, UpdateProjectReq, ProjectStatus, Workspace, CreateWorkspaceReq, UpdateWorkspaceReq, WorkspaceMember, AddMemberReq, UpdateMemberRoleReq, PendingInvitation, InviteMemberReq, UserSummary, Comment, CreateCommentReq, PluginInfo, AppNotification, TaskRule, TaskRuleLog, CreateRuleReq, UpdateRuleReq, Skill, CreateSkillReq, ExtractSkillReq, AgentQueueItem, AgentLoadInfo } from '../types';
 
 
 
@@ -627,6 +627,25 @@ export const skills = {
     request<{ status: string }>(`/skills/${id}`, { method: 'DELETE' }),
   extractFromTask: (data: ExtractSkillReq) =>
     request<{ id: string; status: string; name: string }>('/skills/extract-from-task', { method: 'POST', body: JSON.stringify(data) }),
+};
+
+// Agent Queue
+export const agentQueue = {
+  list: (params?: { agent_profile_id?: string; status?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.agent_profile_id) query.set('agent_profile_id', params.agent_profile_id);
+    if (params?.status) query.set('status', params.status);
+    const qs = query.toString();
+    return request<{ queue: AgentQueueItem[] }>(`/agents/queue${qs ? '?' + qs : ''}`);
+  },
+  autoAssign: (taskId: string) =>
+    request<{ id: string; task_id: string; agent_profile_id: string; agent_name: string; status: string }>(`/agents/auto-assign/${taskId}`, { method: 'POST' }),
+  claim: (id: string) =>
+    request<{ status: string }>(`/agents/queue/${id}/claim`, { method: 'POST' }),
+  updateStatus: (id: string, data: { status: string; result_summary?: string; snapshot?: Record<string, unknown> }) =>
+    request<{ status: string }>(`/agents/queue/${id}/status`, { method: 'PUT', body: JSON.stringify(data) }),
+  listAgentsWithLoad: () =>
+    request<{ agents: AgentLoadInfo[] }>('/agents/queue/agents'),
 };
 
 // User Management

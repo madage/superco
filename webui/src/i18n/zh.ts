@@ -624,6 +624,7 @@ export const zh = {
   skillTaskId: '任务 ID',
   skillTaskIdPlaceholder: '输入任务 ID...',
   navSkills: '技能库',
+  navAgentQueue: '队列',
 
   // Agent Profile Enhancement
 
@@ -640,6 +641,15 @@ export const zh = {
   agentLoad: '负载',
 
   agentLoadInfo: '{current}/{max} 个任务运行中',
+
+  // Agent Queue
+  agentQueue: 'Agent 队列',
+  agentQueueEmpty: '暂无排队任务。',
+  agentQueueQueued: '排队中',
+  agentQueueClaimed: '已认领',
+  agentQueueProcessing: '处理中',
+  agentQueueCompleted: '已完成',
+  agentQueueFailed: '失败',
 
 } as const;
 

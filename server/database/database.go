@@ -533,6 +533,9 @@ func Migrate() error {
 		// Agent as Colleague: Agent autonomous comment flag
 		"ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS is_agent_comment BOOLEAN NOT NULL DEFAULT false",
 
+			// Agent as Colleague: Phase 3 — Task auto_assign flag
+			"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS auto_assign BOOLEAN NOT NULL DEFAULT false",
+
 	}
 
 	for _, a := range alterations {
