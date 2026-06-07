@@ -1,28 +1,21 @@
 package handlers
 
-
-
 import (
-
 	"crypto/rand"
-
-
+	"crypto/sha256"
 	"database/sql"
-
 	"encoding/hex"
-
+	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
-
 	"os"
-
+	"os/exec"
 	"path/filepath"
-
-
+	"runtime"
+	"strings"
 	"time"
-
-
 
 	"github.com/gin-gonic/gin"
 
@@ -31,38 +24,27 @@ import (
 	"github.com/coaether/server/models"
 
 	"github.com/coaether/server/protocol"
-
 )
-
-
 
 const (
-
 	tokenDuration = 15 * time.Minute
 
-	binaryDir     = "bin/agents"
-
+	binaryDir = "bin/agents"
 )
 
-
-
 type NodeHandler struct {
-
-	DB  *sql.DB
+	DB *sql.DB
 
 	Bus *protocol.MessageBus
 
+	Hub *DashboardHub
 }
-
-
 
 func NewNodeHandler(db *sql.DB, bus *protocol.MessageBus) *NodeHandler {
 
 	return &NodeHandler{DB: db, Bus: bus}
 
 }
-
-
 
 func (h *NodeHandler) Register(c *gin.Context) {
 
@@ -76,39 +58,32 @@ func (h *NodeHandler) Register(c *gin.Context) {
 
 	}
 
-
-
 	userID, _ := c.Get("user_id")
-
-
 
 	nodeID := uuid.New().String()
 
 	node := models.Node{
 
-		ID:        nodeID,
+		ID: nodeID,
 
-		UserID:    userID.(string),
+		UserID: userID.(string),
 
-		Name:      req.Name,
+		Name: req.Name,
 
-		OS:        req.OS,
+		OS: req.OS,
 
-		Arch:      req.Arch,
+		Arch: req.Arch,
 
-		Status:    models.NodeStatusOnline,
+		Status: models.NodeStatusOnline,
 
-		Version:   req.Version,
+		Version: req.Version,
 
-		IP:        c.ClientIP(),
+		IP: c.ClientIP(),
 
-		LastSeen:  time.Now(),
+		LastSeen: time.Now(),
 
 		CreatedAt: time.Now(),
-
 	}
-
-
 
 	_, err := h.DB.Exec(
 
@@ -117,7 +92,6 @@ func (h *NodeHandler) Register(c *gin.Context) {
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 
 		node.ID, node.UserID, node.Name, node.OS, node.Arch, node.Status, node.Version, node.IP, node.LastSeen, node.CreatedAt,
-
 	)
 
 	if err != nil {
@@ -128,17 +102,12 @@ func (h *NodeHandler) Register(c *gin.Context) {
 
 	}
 
-
-
 	c.JSON(http.StatusOK, models.NodeRegisterResp{
 
 		NodeID: nodeID,
-
 	})
 
 }
-
-
 
 func (h *NodeHandler) List(c *gin.Context) {
 
@@ -195,6 +164,20 @@ func (h *NodeHandler) List(c *gin.Context) {
 
 	}
 
+	// Determine which nodes can be managed locally
+	runtimePath := findRuntimePath()
+	localIPs := getLocalIPs()
+	for i := range nodes {
+		if runtimePath != "" {
+			for _, ip := range localIPs {
+				if nodes[i].IP == ip {
+					nodes[i].CanManage = true
+					break
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"nodes": nodes})
 
 }
@@ -211,14 +194,11 @@ func (h *NodeHandler) Heartbeat(c *gin.Context) {
 
 	}
 
-
-
 	_, err := h.DB.Exec(
 
 		"UPDATE nodes SET status = $1, last_seen = NOW() WHERE id = $2",
 
 		req.Status, req.NodeID,
-
 	)
 
 	if err != nil {
@@ -229,19 +209,13 @@ func (h *NodeHandler) Heartbeat(c *gin.Context) {
 
 	}
 
-
-
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 
 }
 
-
-
 func (h *NodeHandler) GetByID(c *gin.Context) {
 
 	nodeID := c.Param("id")
-
-
 
 	var n models.Node
 
@@ -250,10 +224,7 @@ func (h *NodeHandler) GetByID(c *gin.Context) {
 		`SELECT id, user_id, name, os, arch, status, version, ip, max_sessions, last_seen, created_at
 
 		 FROM nodes WHERE id = $1`, nodeID,
-
 	).Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.MaxSessions, &n.LastSeen, &n.CreatedAt)
-
-
 
 	if err == sql.ErrNoRows {
 
@@ -271,19 +242,13 @@ func (h *NodeHandler) GetByID(c *gin.Context) {
 
 	}
 
-
-
 	c.JSON(http.StatusOK, n)
 
 }
 
-
-
 func (h *NodeHandler) ListAgents(c *gin.Context) {
 
 	nodeID := c.Param("id")
-
-
 
 	// For UUID-based runtime nodes, return runtime capabilities
 	var epID string
@@ -302,24 +267,23 @@ func (h *NodeHandler) ListAgents(c *gin.Context) {
 
 				agents = append(agents, models.Agent{
 
-					ID:           epID + "/" + cap.ID,
+					ID: epID + "/" + cap.ID,
 
-					NodeID:       nodeID,
+					NodeID: nodeID,
 
-					Name:         cap.Name,
+					Name: cap.Name,
 
-					Command:      cap.ID,
+					Command: cap.ID,
 
-					Version:      cap.Version,
+					Version: cap.Version,
 
-					Enabled:      true,
+					Enabled: true,
 
 					AutoDetected: true,
 
-					CreatedAt:    time.Now(),
+					CreatedAt: time.Now(),
 
-					UpdatedAt:    time.Now(),
-
+					UpdatedAt: time.Now(),
 				})
 
 			}
@@ -332,14 +296,11 @@ func (h *NodeHandler) ListAgents(c *gin.Context) {
 
 	}
 
-
-
 	rows, err := h.DB.Query(
 
 		`SELECT id, node_id, name, command, version, enabled, auto_detected, created_at, updated_at
 
 		 FROM agents WHERE node_id = $1 ORDER BY name`, nodeID,
-
 	)
 
 	if err != nil {
@@ -351,8 +312,6 @@ func (h *NodeHandler) ListAgents(c *gin.Context) {
 	}
 
 	defer rows.Close()
-
-
 
 	var agents []models.Agent
 
@@ -376,13 +335,9 @@ func (h *NodeHandler) ListAgents(c *gin.Context) {
 
 	}
 
-
-
 	c.JSON(http.StatusOK, gin.H{"agents": agents})
 
 }
-
-
 
 func (h *NodeHandler) TriggerScan(c *gin.Context) {
 
@@ -390,18 +345,12 @@ func (h *NodeHandler) TriggerScan(c *gin.Context) {
 
 }
 
-
-
 func (h *NodeHandler) UpdateAgent(c *gin.Context) {
 
 	agentID := c.Param("id")
 
-
-
 	var req struct {
-
 		Enabled bool `json:"enabled"`
-
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -412,14 +361,11 @@ func (h *NodeHandler) UpdateAgent(c *gin.Context) {
 
 	}
 
-
-
 	_, err := h.DB.Exec(
 
 		"UPDATE agents SET enabled = $1, updated_at = NOW() WHERE id = $2",
 
 		req.Enabled, agentID,
-
 	)
 
 	if err != nil {
@@ -430,17 +376,11 @@ func (h *NodeHandler) UpdateAgent(c *gin.Context) {
 
 	}
 
-
-
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 
 }
 
-
-
 // ==================== Scheme B: Token-based Node Registration ====================
-
-
 
 func generateTokenHex() string {
 
@@ -451,8 +391,6 @@ func generateTokenHex() string {
 	return "TOKEN_" + hex.EncodeToString(b)
 
 }
-
-
 
 // getLocalIP returns the first non-loopback IPv4 address of this host.
 func getServerIP() string {
@@ -473,19 +411,13 @@ func (h *NodeHandler) GenerateToken(c *gin.Context) {
 
 	}
 
-
-
 	userID, _ := c.Get("user_id")
 
 	workspaceID, _ := c.Get("validated_workspace_id")
 
-
-
-token := generateTokenHex()
+	token := generateTokenHex()
 
 	expiresAt := time.Now().Add(tokenDuration)
-
-
 
 	wsID, _ := workspaceID.(string)
 	var err error
@@ -498,7 +430,6 @@ token := generateTokenHex()
 			 VALUES ($1, $2, $3, 'pending', $4, NOW())`,
 
 			token, userID, req.NodeName, expiresAt,
-
 		)
 
 	} else {
@@ -510,7 +441,6 @@ token := generateTokenHex()
 			 VALUES ($1, $2, $3, $4, 'pending', $5, NOW())`,
 
 			token, userID, wsID, req.NodeName, expiresAt,
-
 		)
 
 	}
@@ -522,8 +452,6 @@ token := generateTokenHex()
 		return
 
 	}
-
-
 
 	// Build the install command with the server's LAN IP
 	// so remote machines can reach it.
@@ -544,19 +472,16 @@ token := generateTokenHex()
 
 	c.JSON(http.StatusOK, models.GenerateTokenResp{
 
-		Token:     token,
+		Token: token,
 
 		ExpiresAt: expiresAt,
 
-		Command:   command,
+		Command: command,
 
-			CommandPS1: commandPS1,
-
+		CommandPS1: commandPS1,
 	})
 
 }
-
-
 
 // InstallScript returns a shell script that installs and starts the agent runtime on a remote machine.
 
@@ -572,8 +497,6 @@ func (h *NodeHandler) InstallScript(c *gin.Context) {
 
 	}
 
-
-
 	// Validate token
 
 	var status string
@@ -581,7 +504,6 @@ func (h *NodeHandler) InstallScript(c *gin.Context) {
 	err := h.DB.QueryRow(
 
 		`SELECT status FROM node_join_tokens WHERE token = $1`, token,
-
 	).Scan(&status)
 
 	if err == sql.ErrNoRows {
@@ -608,9 +530,7 @@ func (h *NodeHandler) InstallScript(c *gin.Context) {
 
 	}
 
-
-
-		ip := getServerIP()
+	ip := getServerIP()
 	_, port, _ := net.SplitHostPort(c.Request.Host)
 	if port == "" {
 		port = "8088"
@@ -750,8 +670,6 @@ echo "View logs: tail -f $HOME/.coaether/agent.log"
 
 `, token, serverAddr, scheme, serverAddr)
 
-
-
 	c.Header("Content-Type", "text/x-shellscript")
 
 	c.String(http.StatusOK, script)
@@ -872,8 +790,6 @@ Write-Host "View process: Get-Process agent-runtime"
 	c.String(http.StatusOK, script)
 }
 
-
-
 // DownloadBinary serves pre-compiled agent-runtime binaries for remote platforms.
 
 func (h *NodeHandler) DownloadBinary(c *gin.Context) {
@@ -882,8 +798,6 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 
 	arch := c.Param("arch")
 
-
-
 	if arch != "amd64" && arch != "arm64" {
 
 		c.String(http.StatusBadRequest, "unsupported arch: "+arch)
@@ -891,8 +805,6 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 		return
 
 	}
-
-
 
 	// Try multiple possible locations for the binary
 
@@ -905,10 +817,7 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 		filepath.Join("..", binaryDir, osName+"-"+arch, "agent-runtime"),
 
 		filepath.Join("..", binaryDir, osName+"-"+arch, "agent-runtime.exe"),
-
 	}
-
-
 
 	var foundPath string
 
@@ -924,8 +833,6 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 
 	}
 
-
-
 	if foundPath == "" {
 
 		c.String(http.StatusNotFound, "binary not found for "+osName+"/"+arch)
@@ -934,13 +841,242 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 
 	}
 
-
-
 	c.File(foundPath)
 
 }
 
+// findRuntimePath locates the agent-runtime binary on this machine.
+func findRuntimePath() string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		exe := "agent-runtime"
+		if runtime.GOOS == "windows" {
+			exe = "agent-runtime.exe"
+		}
+		p := filepath.Join(home, ".coaether", exe)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	// Fall back to PATH lookup
+	exe := "agent-runtime"
+	if runtime.GOOS == "windows" {
+		exe = "agent-runtime.exe"
+	}
+	if p, err := exec.LookPath(exe); err == nil {
+		return p
+	}
+	return ""
+}
 
+// getLocalIPs returns all non-loopback IPv4 addresses of this host.
+func getLocalIPs() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return []string{"127.0.0.1", "::1"}
+	}
+	var ips []string
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			ips = append(ips, ipnet.IP.String())
+		}
+	}
+	return ips
+}
+
+// saveNodeSecretToEnv persists the node_secret and node_id to ~/.coaether/env
+// so the runtime can reconnect on restart without needing a new token.
+func saveNodeSecretToEnv(secret, nodeID, serverAddr string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[StartNode] Cannot save secret to env: %v", err)
+		return
+	}
+	envPath := filepath.Join(home, ".coaether", "env")
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		data = []byte("SERVER_URL=" + serverAddr + "\nNODE_TOKEN=\nNODE_SECRET=\nRUNTIME_NAME=\n")
+	}
+	lines := strings.Split(string(data), "\n")
+	updated := map[string]string{
+		"SERVER_URL":  serverAddr,
+		"NODE_SECRET": secret,
+		"NODE_ID":     nodeID,
+	}
+	for i, line := range lines {
+		for key, val := range updated {
+			if strings.HasPrefix(line, key+"=") {
+				lines[i] = key + "=" + val
+				delete(updated, key)
+				break
+			}
+		}
+	}
+	// Add any remaining keys that weren't found
+	for key, val := range updated {
+		lines = append(lines, key+"="+val)
+	}
+	if err := os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		log.Printf("[StartNode] Failed to write env file: %v", err)
+	} else {
+		log.Printf("[StartNode] Saved node secret to %s", envPath)
+	}
+}
+
+// StartNode starts the agent-runtime on the local machine.
+func (h *NodeHandler) StartNode(c *gin.Context) {
+	nodeID := c.Param("id")
+	userID, _ := c.Get("user_id")
+
+	// Verify ownership
+	var ownerID string
+	err := h.DB.QueryRow(`SELECT user_id FROM nodes WHERE id = $1`, nodeID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+	if ownerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your node"})
+		return
+	}
+
+	runtimePath := findRuntimePath()
+	if runtimePath == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent-runtime binary not found on this server"})
+		return
+	}
+
+	// Check if already running
+	var pid int
+	out, err := exec.Command(runtimePath, "status", "--json").Output()
+	if err == nil {
+		var st struct {
+			Status string `json:"status"`
+			PID    int    `json:"pid"`
+		}
+		if json.Unmarshal(out, &st) == nil && st.Status == "running" {
+			pid = st.PID
+			c.JSON(http.StatusOK, gin.H{"status": "already_running", "pid": pid})
+			return
+		}
+	}
+
+	// Generate a fresh node_secret for this node so agent-runtime can connect
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate secret"})
+		return
+	}
+	nodeSecret := hex.EncodeToString(secretBytes)
+	secretHash := sha256.Sum256([]byte(nodeSecret))
+	secretHashHex := hex.EncodeToString(secretHash[:])
+
+	if _, err := h.DB.Exec(
+		`UPDATE nodes SET node_secret_hash = $1 WHERE id = $2`,
+		secretHashHex, nodeID,
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save secret"})
+		return
+	}
+
+	// Determine server address for the runtime to connect to
+	serverAddr := os.Getenv("SERVER_URL")
+	if serverAddr == "" {
+		serverAddr = "localhost:8088"
+	}
+
+	// Save the secret to ~/.coaether/env so the runtime can reconnect on restart
+	saveNodeSecretToEnv(nodeSecret, nodeID, serverAddr)
+
+	// Start the runtime with the secret
+	cmd := exec.Command(runtimePath, "start", "--server", serverAddr, "--secret", nodeSecret)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	if err := cmd.Start(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start runtime: " + err.Error()})
+		return
+	}
+
+	// Immediately broadcast online status to dashboards
+	if h.Hub != nil {
+		h.Hub.BroadcastToDashboards("node_status", map[string]interface{}{
+			"node_id": nodeID,
+			"status":  "online",
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "started", "pid": cmd.Process.Pid})
+}
+
+// StopNode stops the agent-runtime on the local machine.
+func (h *NodeHandler) StopNode(c *gin.Context) {
+	nodeID := c.Param("id")
+	userID, _ := c.Get("user_id")
+
+	// Verify ownership
+	var ownerID string
+	err := h.DB.QueryRow(`SELECT user_id FROM nodes WHERE id = $1`, nodeID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		return
+	}
+	if ownerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your node"})
+		return
+	}
+
+	runtimePath := findRuntimePath()
+
+	// Try graceful stop via binary first (uses PID file)
+	if runtimePath != "" {
+		cmd := exec.Command(runtimePath, "stop")
+		cmd.Stderr = os.Stderr
+		cmd.Stdout = os.Stdout
+		if err := cmd.Run(); err == nil {
+			c.JSON(http.StatusOK, gin.H{"status": "stopped"})
+			return
+		}
+		log.Printf("[StopNode] stop command failed, falling back to process lookup: %v", err)
+	}
+
+	// Fallback: kill agent-runtime processes directly
+	killed := killAgentRuntimes()
+	if killed > 0 {
+		log.Printf("[StopNode] Killed %d agent-runtime process(es)", killed)
+		c.JSON(http.StatusOK, gin.H{"status": "stopped", "method": "fallback", "killed": killed})
+		return
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "no running agent-runtime process found"})
+}
+
+// killAgentRuntimes kills all agent-runtime processes on the local machine.
+// Returns the number of processes killed.
+func killAgentRuntimes() int {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("taskkill", "/F", "/IM", "agent-runtime.exe")
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err == nil {
+			return 1
+		}
+		// taskkill may fail if process already gone
+		return 0
+	}
+	cmd := exec.Command("pkill", "agent-runtime")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err == nil {
+		return 1
+	}
+	return 0
+}
 
 // RemoveNode deletes a registered node and disconnects it from the bus.
 
@@ -949,8 +1085,6 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 	nodeID := c.Param("id")
 
 	userID, _ := c.Get("user_id")
-
-
 
 	// Verify ownership
 
@@ -982,16 +1116,12 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 
 	}
 
-
-
 	// Disconnect from bus if connected
 	if h.Bus != nil {
 		if ep := h.Bus.GetEndpoint("runtime://" + nodeID); ep != nil {
 			h.Bus.Unregister("runtime://" + nodeID)
 		}
 	}
-
-
 
 	// Delete from DB (cascades to agents)
 
@@ -1005,13 +1135,9 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 
 	}
 
-
-
 	c.JSON(http.StatusOK, gin.H{"status": "removed"})
 
 }
-
-
 
 // ValidateJoinToken checks if a token is valid and marks it as used.
 
@@ -1030,7 +1156,6 @@ func (h *NodeHandler) ValidateJoinToken(token string) (string, string, error) {
 		 WHERE token = $1 AND status = 'pending'`,
 
 		token,
-
 	).Scan(&userID, &nodeName, &expiresAt)
 
 	if err != nil {
@@ -1051,8 +1176,6 @@ func (h *NodeHandler) ValidateJoinToken(token string) (string, string, error) {
 
 }
 
-
-
 // UseJoinToken marks a token as used and returns the node info.
 
 func (h *NodeHandler) UseJoinToken(token string) error {
@@ -1062,12 +1185,8 @@ func (h *NodeHandler) UseJoinToken(token string) error {
 		`UPDATE node_join_tokens SET status = 'used', used_at = NOW() WHERE token = $1`,
 
 		token,
-
 	)
 
 	return err
 
 }
-
-
-

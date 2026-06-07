@@ -47,6 +47,7 @@ export interface Node {
   last_seen: string;
   created_at: string;
   agents?: Agent[];
+  can_manage?: boolean;
 }
 
 // === Session Types ===

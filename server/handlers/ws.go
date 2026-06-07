@@ -149,13 +149,18 @@ func (h *DashboardHub) sendDashboardInit(nc *DashboardConn, userID string, works
 	// Build set of currently active runtime endpoint node IDs
 	activeNodes := make(map[string]bool)
 	if h.Bus != nil {
-		for _, ep := range h.Bus.EndpointsByType(protocol.EndpointRuntime) {
-			// Extract node ID from "runtime://<uuid>"
+		allRT := h.Bus.EndpointsByType(protocol.EndpointRuntime)
+		log.Printf("[Dashboard] Found %d runtime endpoints on bus", len(allRT))
+		for _, ep := range allRT {
 			if len(ep.ID) > 9 && ep.ID[:9] == "runtime://" {
 				activeNodes[ep.ID[9:]] = true
+				log.Printf("[Dashboard] -> runtime endpoint: %s -> node=%s", ep.ID, ep.ID[9:])
+			} else {
+				log.Printf("[Dashboard] -> non-matching endpoint: %s (len=%d)", ep.ID, len(ep.ID))
 			}
 		}
 	}
+	log.Printf("[Dashboard] activeNodes map: %v", activeNodes)
 
 	// Fetch nodes — if workspaceID is set, show all workspace members' nodes
 	nodes := make([]models.Node, 0)
@@ -182,14 +187,26 @@ func (h *DashboardHub) sendDashboardInit(nc *DashboardConn, userID string, works
 			if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.OS, &n.Arch, &n.Status, &n.Version, &n.IP, &n.LastSeen, &n.CreatedAt); err == nil {
 				if activeNodes[n.ID] {
 					n.Status = models.NodeStatusOnline
-				} else if n.Status != models.NodeStatusOffline {
-					n.Status = models.NodeStatusOffline
 				}
 				nodes = append(nodes, n)
 			}
 		}
 	} else {
 		log.Printf("[Dashboard] Failed to query nodes for init: %v", err)
+	}
+
+	// Compute can_manage for each node
+	runtimePath := findRuntimePath()
+	localIPs := getLocalIPs()
+	for i := range nodes {
+		if runtimePath != "" {
+			for _, ip := range localIPs {
+				if nodes[i].IP == ip {
+					nodes[i].CanManage = true
+					break
+				}
+			}
+		}
 	}
 
 	// Fetch sessions for this user

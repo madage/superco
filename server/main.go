@@ -1,12 +1,7 @@
 package main
 
-
-
 import (
-
 	"log"
-
-
 
 	"github.com/gin-gonic/gin"
 
@@ -23,16 +18,11 @@ import (
 	"github.com/coaether/server/protocol"
 
 	"github.com/coaether/server/store"
-
 )
-
-
 
 func main() {
 
 	cfg := config.Load()
-
-
 
 	// Database
 
@@ -44,15 +34,11 @@ func main() {
 
 	defer database.Close()
 
-
-
 	if err := database.Migrate(); err != nil {
 
 		log.Fatalf("[FATAL] %v", err)
 
 	}
-
-
 
 	// Mailer
 
@@ -68,8 +54,6 @@ func main() {
 
 	}
 
-
-
 	// Message Bus
 
 	messageBus := protocol.NewMessageBus()
@@ -82,8 +66,6 @@ func main() {
 
 	busH := handlers.NewBusHandler(messageBus, database.DB)
 
-
-
 	// Handlers
 
 	authH := handlers.NewAuthHandler(database.DB, cfg.JWTSecret)
@@ -91,6 +73,7 @@ func main() {
 	nodeH := handlers.NewNodeHandler(database.DB, messageBus)
 
 	dashHub := handlers.NewDashboardHub(database.DB, cfg.JWTSecret, messageBus)
+	nodeH.Hub = dashHub // for node status broadcasting
 
 	sessionH := handlers.NewSessionHandler(database.DB, messageBus)
 
@@ -114,13 +97,9 @@ func main() {
 
 	busH.Hub = dashHub // link for dashboard broadcasting
 
-
-
 	// Router
 
 	r := gin.Default()
-
-
 
 	// CORS
 
@@ -144,23 +123,17 @@ func main() {
 
 	})
 
-
-
 	// Public routes
 
 	r.POST("/api/auth/login", authH.Login)
 
 	r.POST("/api/auth/register", authH.Register)
 
-
-
 	// Public invitation routes (no auth needed — info only)
 
 	r.GET("/api/invitations/:token", workspaceH.GetInvitationByToken)
 
 	r.POST("/api/invitations/:token/decline", workspaceH.DeclineInvitation)
-
-
 
 	// Health check
 
@@ -170,15 +143,11 @@ func main() {
 
 	})
 
-
-
 	// WebSocket routes
 
 	r.GET("/ws/dashboard", dashHub.HandleDashboardWS)
 
 	r.GET("/ws/bus", busH.HandleWS)
-
-
 
 	// Public node routes (no auth — token-based security)
 
@@ -187,8 +156,6 @@ func main() {
 	r.GET("/api/nodes/install.ps1", nodeH.InstallScriptPS1)
 
 	r.GET("/api/nodes/bin/:os/:arch", nodeH.DownloadBinary)
-
-
 
 	// Auth required
 
@@ -216,11 +183,11 @@ func main() {
 
 		api.POST("/nodes/:id/scan", nodeH.TriggerScan)
 
+		api.POST("/nodes/:id/start", nodeH.StartNode)
 
+		api.POST("/nodes/:id/stop", nodeH.StopNode)
 
 		api.PATCH("/agents/:id", nodeH.UpdateAgent)
-
-
 
 		// Agent profiles
 
@@ -235,8 +202,6 @@ func main() {
 		api.DELETE("/agents/profiles/:id", profileH.Delete)
 
 		api.GET("/agents/runtimes", profileH.ListRuntimes)
-
-
 
 		// Tasks
 
@@ -258,8 +223,6 @@ func main() {
 
 		api.PATCH("/tasks/:id/status", taskH.SetStatus)
 
-
-
 		// Projects
 
 		api.GET("/projects", projectH.List)
@@ -278,8 +241,6 @@ func main() {
 
 		api.POST("/projects/:id/restore", projectH.Restore)
 
-
-
 		// Workspaces
 
 		api.GET("/workspaces", workspaceH.List)
@@ -292,8 +253,6 @@ func main() {
 
 		api.DELETE("/workspaces/:id", workspaceH.Delete)
 
-
-
 		// Workspace members
 
 		api.GET("/workspaces/:id/members", workspaceH.ListMembers)
@@ -303,8 +262,6 @@ func main() {
 		api.PUT("/workspaces/:id/members/:userId", workspaceH.UpdateMemberRole)
 
 		api.DELETE("/workspaces/:id/members/:userId", workspaceH.RemoveMember)
-
-
 
 		// Workspace invitations (authenticated)
 
@@ -318,15 +275,11 @@ func main() {
 
 		api.GET("/invitations/pending", workspaceH.ListPendingInvitations)
 
-
-
 		// User management (admin/owner)
 
 		api.GET("/users", userH.List)
 
 		api.DELETE("/users/:id", userH.Delete)
-
-
 
 		api.POST("/sessions", sessionH.Create)
 
@@ -364,8 +317,6 @@ func main() {
 
 	}
 
-
-
 	log.Printf("[Server] Starting on :%s", cfg.ServerPort)
 
 	if err := r.Run(":" + cfg.ServerPort); err != nil {
@@ -375,4 +326,3 @@ func main() {
 	}
 
 }
-

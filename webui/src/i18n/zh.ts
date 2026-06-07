@@ -369,6 +369,11 @@ export const zh = {
 
   nodeRemoveConfirm: '确定要移除这个节点吗？',
 
+  nodeStart: '启动',
+  nodeStop: '停止',
+  nodeStarting: '启动中...',
+  nodeStopping: '停止中...',
+
   alreadyHasNode: '你已有一个活跃节点，请先移除它。',
 
 

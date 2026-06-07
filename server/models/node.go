@@ -23,6 +23,7 @@ type Node struct {
 	LastSeen    time.Time  `json:"last_seen"`
 	CreatedAt   time.Time  `json:"created_at"`
 	Agents      []Agent    `json:"agents,omitempty"`
+	CanManage   bool       `json:"can_manage,omitempty"`
 }
 
 type NodeRegisterReq struct {

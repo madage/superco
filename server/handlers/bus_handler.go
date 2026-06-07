@@ -135,8 +135,8 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 			tokenUserID = userID
 
 			h.DB.Exec(
-				`UPDATE nodes SET status = 'online', last_seen = NOW() WHERE id = $1`,
-				nodeID,
+				`UPDATE nodes SET status = 'online', last_seen = NOW(), ip = $2 WHERE id = $1`,
+				nodeID, c.ClientIP(),
 			)
 		} else {
 			// Path B: First-time registration using token
@@ -191,7 +191,7 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 					max_sessions, last_seen, created_at, node_secret_hash)
 				 VALUES ($1, $2, $3, $4, $5, 'online', $6, $7, $8, NOW(), NOW(), $9)`,
 				nodeID, tokenUserID, nodeName, "unknown", "unknown",
-				"0.1.0", "bus", 3, secretHashHex,
+				"0.1.0", c.ClientIP(), 3, secretHashHex,
 			)
 
 			// Send registration message with node_secret to runtime

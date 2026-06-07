@@ -369,6 +369,11 @@ export const en = {
 
   nodeRemoveConfirm: 'Are you sure you want to remove this node?',
 
+  nodeStart: 'Start',
+  nodeStop: 'Stop',
+  nodeStarting: 'Starting...',
+  nodeStopping: 'Stopping...',
+
   alreadyHasNode: 'You already have an active node. Remove it first.',
 
 

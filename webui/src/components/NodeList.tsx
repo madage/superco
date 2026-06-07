@@ -14,6 +14,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
   const [agentMap, setAgentMap] = useState<Record<string, Agent[]>>({});
   const [scanning, setScanning] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [managing, setManaging] = useState<string | null>(null);
   const [showOffline, setShowOffline] = useState(true);
 
   const filteredNodes = showOffline ? nodes : nodes.filter(n => n.status === 'online' || n.status === 'busy');
@@ -63,6 +64,30 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
       }, 2000);
     } catch {
       setScanning(null);
+    }
+  }, []);
+
+  const handleStart = useCallback(async (nodeID: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const key = `start:${nodeID}`;
+    setManaging(key);
+    try {
+      await nodesApi.start(nodeID);
+      // Leave button showing "启动中..." until WebSocket updates node status
+    } catch {
+      setManaging(null);
+    }
+  }, []);
+
+  const handleStop = useCallback(async (nodeID: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const key = `stop:${nodeID}`;
+    setManaging(key);
+    try {
+      await nodesApi.stop(nodeID);
+      // Leave button showing "停止中..." until WebSocket updates node status
+    } catch {
+      setManaging(null);
     }
   }, []);
 
@@ -208,6 +233,48 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
                     </div>
                   </div>
                 </div>
+
+                {/* Start/Stop buttons at bottom-right */}
+                {node.can_manage ? (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                    {node.can_manage && node.status === 'offline' && (
+                      <button
+                        onClick={(e) => handleStart(node.id, e)}
+                        disabled={managing === `start:${node.id}`}
+                        style={{
+                          padding: '10px 28px',
+                          background: managing === `start:${node.id}` ? '#a5d6a7' : '#4caf50',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: managing === `start:${node.id}` ? 'not-allowed' : 'pointer',
+                          fontSize: '0.95em',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {managing === `start:${node.id}` ? t('nodeStarting') : t('nodeStart')}
+                      </button>
+                    )}
+                    {node.can_manage && node.status !== 'offline' && (
+                      <button
+                        onClick={(e) => handleStop(node.id, e)}
+                        disabled={managing === `stop:${node.id}`}
+                        style={{
+                          padding: '10px 28px',
+                          background: managing === `stop:${node.id}` ? '#ef9a9a' : '#e53935',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: managing === `stop:${node.id}` ? 'not-allowed' : 'pointer',
+                          fontSize: '0.95em',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {managing === `stop:${node.id}` ? t('nodeStopping') : t('nodeStop')}
+                      </button>
+                    )}
+                  </div>
+                ) : null}
               </div>
             </div>
 

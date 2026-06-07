@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -334,6 +335,26 @@ func loadConfig() {
 	}
 }
 
+func writePIDFile() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	pidFile := filepath.Join(home, ".coaether", "runtime.pid")
+	pid := strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(pidFile, []byte(pid+"\n"), 0644); err != nil {
+		log.Printf("[Runtime] Failed to write PID file: %v", err)
+		return ""
+	}
+	return pidFile
+}
+
+func removePIDFile(pidFile string) {
+	if pidFile != "" {
+		os.Remove(pidFile)
+	}
+}
+
 func runStart() {
 	loadConfig()
 
@@ -346,6 +367,10 @@ func runStart() {
 	if name == "" {
 		name, _ = os.Hostname()
 	}
+
+	// Write PID file so "agent-runtime stop" can find this process
+	pidFile := writePIDFile()
+	defer removePIDFile(pidFile)
 
 	// Prefer persistent node_secret over one-time token
 	nodeSecret := os.Getenv("NODE_SECRET")
