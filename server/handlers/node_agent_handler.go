@@ -222,6 +222,9 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
 	if h.Hub != nil {
 		h.Hub.SignalChange("task_agent_queue")
+		if req.Status == "processing" || req.Status == "completed" {
+			h.Hub.SignalChange("tasks")
+		}
 	}
 }
 
