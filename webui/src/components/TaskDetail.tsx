@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLang } from '../i18n/context';
-import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi, agentQueue as agentQueueApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment } from '../types';
 
@@ -69,7 +69,16 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [showDeleteVerify, setShowDeleteVerify] = useState(false);
   const [confirmDeleteComment, setConfirmDeleteComment] = useState<string | null>(null);
 
+  const [isProcessing, setIsProcessing] = useState(false);
+
   const isOverdue = currentTask.due_at && new Date(currentTask.due_at) < new Date() && currentTask.status !== 'done';
+
+  useEffect(() => {
+    // Check if this task is currently being processed by an agent
+    agentQueueApi.list({ status: 'processing' }).then(res => {
+      setIsProcessing(res.queue.some(q => q.task_id === currentTask.id));
+    }).catch(() => {});
+  }, [currentTask.id]);
 
   useEffect(() => {
     const load = async () => {
@@ -585,6 +594,12 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   };
 
   return (
+    <>
+      <style>{`
+        @keyframes task-card-spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     <div
       onClick={onClose}
       style={{
@@ -617,6 +632,18 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
             }}>
               {statusLabel[currentTask.status]}
             </span>
+            {isProcessing && (
+              <span
+                title="Agent processing..."
+                style={{
+                  width: '14px', height: '14px', borderRadius: '50%',
+                  border: '2px solid #e0e0e0',
+                  borderTopColor: '#1976d2',
+                  animation: 'task-card-spin 0.8s linear infinite',
+                  display: 'inline-block', flexShrink: 0,
+                }}
+              />
+            )}
           </div>
           <button onClick={onClose}
             style={{
@@ -1117,5 +1144,6 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
         </div>
       )}
     </div>
+    </>
   );
 }

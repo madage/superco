@@ -33,22 +33,24 @@ type Runtime struct {
 	Token     string
 	Secret    string
 
-	conn      *websocket.Conn
-	connMu    sync.Mutex
-	backends  map[string]Backend
-	endpoint  string
+	conn        *websocket.Conn
+	connMu      sync.Mutex
+	backends    map[string]Backend
+	endpoint    string
+	sessionMeta map[string]map[string]string // sessionID → {queueID, taskID, ...}
 }
 
 // NewRuntime creates a new Runtime.
 func NewRuntime(serverURL, nodeID, name, token, secret string) *Runtime {
 	return &Runtime{
-		ServerURL: serverURL,
-		NodeID:    nodeID,
-		Name:      name,
-		Token:     token,
-		Secret:    secret,
-		backends:  make(map[string]Backend),
-		endpoint:  "runtime://" + nodeID,
+		ServerURL:   serverURL,
+		NodeID:      nodeID,
+		Name:        name,
+		Token:       token,
+		Secret:      secret,
+		backends:    make(map[string]Backend),
+		sessionMeta: make(map[string]map[string]string),
+		endpoint:    "runtime://" + nodeID,
 	}
 }
 
@@ -170,6 +172,28 @@ func (r *Runtime) handleMessage(env *protocol.Envelope) {
 
 	case protocol.MsgSessionCreate:
 		log.Printf("[Runtime] Session create received: %s", env.SessionID)
+		// Store session context (queue_id, task_id) for completion callback
+		if env.Payload != nil && env.Payload.Context != nil {
+			ctx, ok := env.Payload.Context.(map[string]any)
+			if !ok {
+				break
+			}
+			meta := make(map[string]string)
+			for k, v := range ctx {
+				switch val := v.(type) {
+				case string:
+					meta[k] = val
+				case bool:
+					if val {
+						meta[k] = "true"
+					}
+				}
+			}
+			r.connMu.Lock()
+			r.sessionMeta[env.SessionID] = meta
+			r.connMu.Unlock()
+			log.Printf("[Runtime] Session context: %v", meta)
+		}
 		join := protocol.NewEnvelope(r.endpoint, "system://bus", protocol.MsgSessionJoin, nil)
 		join.SessionID = env.SessionID
 		r.send(join)
@@ -389,6 +413,7 @@ func (r *Runtime) processQueueItem(item queueItem) {
 	sessionReq := map[string]string{
 		"task_id":  item.TaskID,
 		"agent_id": "claude",
+		"queue_id": item.ID,
 	}
 	sessionBody, _ := json.Marshal(sessionReq)
 	resp, err = http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
@@ -554,6 +579,9 @@ func runStart() {
 func (r *Runtime) registerBackends() {
 	if cli := backends.NewClaudeCLIBackend(""); cli != nil {
 		cli.SetSendFunc(r.send)
+		cli.SetOnSessionComplete(func(sessionID, result, stopReason string, isError bool) {
+			r.handleSessionComplete(sessionID, result, stopReason, isError)
+		})
 		r.RegisterBackend("claude", cli)
 		log.Println("[Runtime] Claude CLI backend enabled (stream-json)")
 	} else if api := backends.NewClaudeBackend(); api != nil {
@@ -562,6 +590,52 @@ func (r *Runtime) registerBackends() {
 	} else {
 		r.RegisterBackend("echo", backends.NewEchoBackend())
 		log.Println("[Runtime] No claude CLI or API key, using echo backend")
+	}
+}
+
+// handleSessionComplete is called when a claude process finishes for an auto-task session.
+// It updates the task queue status via the server HTTP API.
+func (r *Runtime) handleSessionComplete(sessionID, result, stopReason string, isError bool) {
+	r.connMu.Lock()
+	meta, ok := r.sessionMeta[sessionID]
+	delete(r.sessionMeta, sessionID)
+	r.connMu.Unlock()
+
+	if !ok || meta["is_auto_task"] != "true" {
+		return
+	}
+
+	queueID := meta["queue_id"]
+	if queueID == "" {
+		log.Printf("[Runtime] No queue_id for session %s, skipping queue update", sessionID[:8])
+		return
+	}
+
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	status := "completed"
+	if isError {
+		status = "failed"
+	}
+
+	body := map[string]string{
+		"status":         status,
+		"result_summary": result,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	u := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, queueID, auth)
+	resp, err := http.Post(u, "application/json", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		log.Printf("[Runtime] Queue update failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		log.Printf("[Runtime] Queue %s updated to %s", queueID[:8], status)
+	} else {
+		log.Printf("[Runtime] Queue update returned %d", resp.StatusCode)
 	}
 }
 

@@ -376,6 +376,11 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 		&protocol.Payload{
 			Agents:    []protocol.AgentSpec{{ID: "claude"}},
 			Workspace: workspaceID,
+			Context: map[string]any{
+				"queue_id":    queueID,
+				"task_id":     taskID,
+				"is_auto_task": true,
+			},
 		},
 	)
 	createEnv.SessionID = sessionID

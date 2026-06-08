@@ -17,13 +17,21 @@ import (
 	"github.com/coaether/server/protocol"
 )
 
+// OnSessionComplete is called when a claude process finishes with a result event.
+type OnSessionComplete func(sessionID string, result string, stopReason string, isError bool)
+
 // ClaudeCLIBackend manages persistent claude subprocesses via stream-json protocol.
 type ClaudeCLIBackend struct {
-	command  string
-	timeout  time.Duration
-	sessions map[string]*claudeSession
-	sendFunc func(*protocol.Envelope)
-	mu       sync.Mutex
+	command    string
+	timeout    time.Duration
+	sessions   map[string]*claudeSession
+	sendFunc   func(*protocol.Envelope)
+	onComplete OnSessionComplete
+	mu         sync.Mutex
+}
+
+func (b *ClaudeCLIBackend) SetOnSessionComplete(fn OnSessionComplete) {
+	b.onComplete = fn
 }
 
 type claudeSession struct {
@@ -36,6 +44,19 @@ type claudeSession struct {
 	model        string
 	sessionID    string
 	lastActivity time.Time
+	completed    bool
+}
+
+func (s *claudeSession) setCompleted() {
+	s.mu.Lock()
+	s.completed = true
+	s.mu.Unlock()
+}
+
+func (s *claudeSession) isCompleted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.completed
 }
 
 func NewClaudeCLIBackend(cmdPath string) *ClaudeCLIBackend {
@@ -257,6 +278,12 @@ func (b *ClaudeCLIBackend) readStdout(sess *claudeSession, stdout io.Reader) {
 	if err := scanner.Err(); err != nil {
 		log.Printf("[ClaudeCLI][%s] Scan error: %v", sid, err)
 	}
+
+	// Fallback: if no result event was received (e.g., claude crashed), still notify
+	if !sess.isCompleted() && b.onComplete != nil {
+		log.Printf("[ClaudeCLI][%s] Session ended without result event", sid)
+		b.onComplete(sess.sessionID, "", "error", true)
+	}
 }
 
 // ---- event handlers ----
@@ -357,6 +384,12 @@ func (b *ClaudeCLIBackend) handleResultEvent(sess *claudeSession, evt *streamJSO
 			},
 			Metadata: metadata,
 		}).WithSession(sess.sessionID))
+
+	// Notify caller that this session's claude process completed
+	sess.setCompleted()
+	if b.onComplete != nil {
+		b.onComplete(sess.sessionID, evt.Result, evt.StopReason, evt.IsError)
+	}
 }
 
 func (b *ClaudeCLIBackend) handlePermissionEvent(sess *claudeSession, evt *streamJSONEvent) {
