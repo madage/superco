@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/coaether/server/middleware"
 	"github.com/coaether/server/models"
+	"github.com/coaether/server/protocol"
 )
 
 type TaskHandler struct {
@@ -21,6 +23,7 @@ type TaskHandler struct {
 	Notifier       *NotificationHandler
 	RuleEngine     *RuleEngine
 	AgentScheduler *AgentScheduler
+	MessageBus     *protocol.MessageBus
 }
 
 func NewTaskHandler(db *sql.DB) *TaskHandler {
@@ -311,6 +314,85 @@ func (h *TaskHandler) autoAssignTask(taskID, workspaceID string) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("task_agent_queue")
 	}
+
+	// Auto-process: create session and send task to the runtime
+	h.processAgentTask(taskID, agentID, queueID)
+}
+
+func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
+	if h.MessageBus == nil {
+		return
+	}
+
+	// Get task details + agent profile node_id
+	var title, description, workspaceID, nodeID string
+	err := h.DB.QueryRow(`
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id
+		FROM tasks t
+		JOIN agent_profiles ap ON ap.id = $2
+		WHERE t.id = $1 AND t.deleted_at IS NULL`,
+		taskID, agentProfileID,
+	).Scan(&title, &description, &workspaceID, &nodeID)
+	if err != nil || nodeID == "" {
+		return // can't process without a node
+	}
+
+	// Check if the runtime is connected on the bus
+	runtimeEndpoint := "runtime://" + nodeID
+	found := false
+	for _, ep := range h.MessageBus.EndpointsByType(protocol.EndpointRuntime) {
+		if ep.ID == runtimeEndpoint {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return // runtime not connected, leave as queued
+	}
+
+	// Create a session
+	sessionID := uuid.New().String()
+	now := time.Now()
+	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s\n\nPlease work on this task.", title, description)
+
+	h.MessageBus.CreateSession(sessionID, map[string]protocol.MemberRole{
+		"system://api": protocol.RoleOwner,
+	})
+
+	h.DB.Exec(
+		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
+		 VALUES ($1, '', $2, 'claude', $3, $4, $5, $6, $6)`,
+		sessionID, nodeID, models.SessionPending, prompt, workspaceID, now,
+	)
+
+	// Send session.create to the runtime
+	createEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgSessionCreate,
+		&protocol.Payload{
+			Agents:    []protocol.AgentSpec{{ID: "claude"}},
+			Workspace: workspaceID,
+		},
+	)
+	createEnv.SessionID = sessionID
+	h.MessageBus.Deliver(createEnv)
+
+	// Brief wait for runtime to join, then send the task prompt
+	time.Sleep(500 * time.Millisecond)
+	msgEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgMessage,
+		&protocol.Payload{
+			Content: []protocol.ContentBlock{protocol.TextBlock(prompt)},
+			Metadata: map[string]any{
+				"task_id":      taskID,
+				"auto_task":    true,
+			},
+		},
+	)
+	msgEnv.SessionID = sessionID
+	h.MessageBus.Deliver(msgEnv)
+
+	// Update queue to processing
+	h.DB.Exec(`UPDATE task_agent_queue SET status = 'processing', claimed_at = $1 WHERE id = $2`, now, queueID)
+
+	log.Printf("[Task] Auto-processed task %s → session %s on node %s", taskID[:8], sessionID[:8], nodeID[:8])
 }
 
 func (h *TaskHandler) Get(c *gin.Context) {

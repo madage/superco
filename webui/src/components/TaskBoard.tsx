@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useLang, type TranslationKey } from '../i18n/context';
-import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, agentQueue as agentQueueApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
 import { useWorkspace } from '../hooks/WorkspaceContext';
 import { TaskCard } from './TaskCard';
@@ -57,6 +57,16 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
   const [assigneeNames, setAssigneeNames] = useState<Record<string, string>>({});
 
   const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
+  const [processingTasks, setProcessingTasks] = useState<Set<string>>(new Set());
+
+  const fetchProcessingTasks = useCallback(async () => {
+    try {
+      const res = await agentQueueApi.list({ status: 'processing' });
+      setProcessingTasks(new Set(res.queue.map(q => q.task_id)));
+    } catch {
+      // silently fail
+    }
+  }, []);
 
   const fetchTasks = useCallback(async (params?: { projectId?: string; priority?: string; tag?: string; assigneeId?: string; delegatedAssigneeId?: string }) => {
     try {
@@ -91,7 +101,8 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
       assigneeId: filterAssigneeId || undefined,
       delegatedAssigneeId: filterDelegatedId || undefined,
     });
-  }, [filterProjectId, filterPriority, filterTag, filterAssigneeId, filterDelegatedId, fetchTasks]);
+    fetchProcessingTasks();
+  }, [filterProjectId, filterPriority, filterTag, filterAssigneeId, filterDelegatedId, fetchTasks, fetchProcessingTasks]);
 
   useEffect(() => {
     if (initialTaskId && taskList.length > 0) {
@@ -125,6 +136,8 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
     assigneeId: filterAssigneeId || undefined,
     delegatedAssigneeId: filterDelegatedId || undefined,
   }));
+
+  useResourceSync('task_agent_queue', fetchProcessingTasks);
 
   const grouped = taskList.reduce(
     (acc, task) => {
@@ -329,6 +342,7 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
                       assigneeName={task.assignee_id ? (assigneeNames[task.assignee_id] || task.assignee_id.slice(0, 8)) : undefined}
                       creatorName={task.creator_name}
                       assigneeNamesMap={assigneeNames}
+                      processingTasks={processingTasks}
                     />
                   ))}
                 </div>

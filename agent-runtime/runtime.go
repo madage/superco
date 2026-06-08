@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -85,6 +89,9 @@ func (r *Runtime) Run() error {
 	log.Printf("[Runtime] Connected to bus as %s", r.endpoint)
 
 	r.sendHello()
+
+	// Start agent queue poller for autonomous task processing
+	r.startQueuePoller()
 
 	done := make(chan struct{})
 	defer close(done)
@@ -260,6 +267,146 @@ func (r *Runtime) Shutdown() {
 func (r *Runtime) cleanIdleSessions() {
 	if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
 		cli.CleanIdleSessions()
+	}
+}
+
+// ── Agent Queue Poller ──────────────────────────────────────────────
+
+type queueItem struct {
+	ID             string `json:"id"`
+	TaskID         string `json:"task_id"`
+	AgentProfileID string `json:"agent_profile_id"`
+	Status         string `json:"status"`
+	AgentName      string `json:"agent_name"`
+}
+
+type queueResponse struct {
+	Queue []queueItem `json:"queue"`
+}
+
+// startQueuePoller begins polling the agent queue for unclaimed tasks.
+func (r *Runtime) startQueuePoller() {
+	if r.Secret == "" {
+		log.Println("[Runtime] No node_secret available, queue poller disabled")
+		return
+	}
+
+	go func() {
+		// Wait a moment for the connection to stabilize
+		time.Sleep(5 * time.Second)
+		log.Println("[Runtime] Agent queue poller started (interval: 15s)")
+
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			r.pollQueue()
+		}
+	}()
+}
+
+func (r *Runtime) pollQueue() {
+	baseURL := "http://" + r.ServerURL
+
+	// GET /api/node/queue?node_id=...&node_secret=...
+	u := fmt.Sprintf("%s/api/node/queue?node_id=%s&node_secret=%s", baseURL, r.NodeID, r.Secret)
+	resp, err := http.Get(u)
+	if err != nil {
+		log.Printf("[Runtime] Queue poll failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var qr queueResponse
+	if err := json.Unmarshal(body, &qr); err != nil {
+		return
+	}
+
+	for _, item := range qr.Queue {
+		log.Printf("[Runtime] Found queued task %s for agent %s", item.TaskID[:8], item.AgentName)
+		r.processQueueItem(item)
+	}
+}
+
+func (r *Runtime) processQueueItem(item queueItem) {
+	baseURL := "http://" + r.ServerURL
+	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
+
+	// 1. Claim the item
+	claimURL := fmt.Sprintf("%s/api/node/queue/%s/claim?%s", baseURL, item.ID, auth)
+	resp, err := http.Post(claimURL, "application/json", nil)
+	if err != nil {
+		log.Printf("[Runtime] Claim failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Runtime] Claim rejected (status %d)", resp.StatusCode)
+		return
+	}
+	log.Printf("[Runtime] Claimed queue item %s", item.ID[:8])
+
+	// 2. Set status to processing
+	statusURL := fmt.Sprintf("%s/api/node/queue/%s/status?%s", baseURL, item.ID, auth)
+	body := `{"status":"processing"}`
+	resp, err = http.Post(statusURL, "application/json", bytes.NewBufferString(body))
+	if err != nil {
+		log.Printf("[Runtime] Status update failed: %v", err)
+		return
+	}
+	resp.Body.Close()
+
+	// 3. Get task details
+	taskURL := fmt.Sprintf("%s/api/node/tasks/%s?%s", baseURL, item.TaskID, auth)
+	resp, err = http.Get(taskURL)
+	if err != nil {
+		log.Printf("[Runtime] Get task failed: %v", err)
+		return
+	}
+	taskBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var taskResp struct {
+		Task struct {
+			ID          string `json:"id"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(taskBody, &taskResp); err != nil {
+		log.Printf("[Runtime] Task parse error: %v", err)
+		return
+	}
+	log.Printf("[Runtime] Processing task: %s", taskResp.Task.Title)
+
+	// 4. Create a session for this task
+	sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
+	sessionReq := map[string]string{
+		"task_id":  item.TaskID,
+		"agent_id": "claude",
+	}
+	sessionBody, _ := json.Marshal(sessionReq)
+	resp, err = http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
+	if err != nil {
+		log.Printf("[Runtime] Session creation failed: %v", err)
+		return
+	}
+	sessionRespBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode == http.StatusCreated {
+		var sr struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(sessionRespBody, &sr)
+		log.Printf("[Runtime] Session %s created for task '%s'", sr.SessionID[:8], taskResp.Task.Title)
+	} else {
+		log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
 	}
 }
 

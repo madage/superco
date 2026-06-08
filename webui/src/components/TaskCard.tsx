@@ -44,9 +44,11 @@ interface TaskCardProps {
   assigneeName?: string;
   creatorName?: string;
   assigneeNamesMap?: Record<string, string>;
+  processingTasks?: Set<string>;
 }
 
-export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap }: TaskCardProps) {
+export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, subtaskCount, assigneeName, creatorName, assigneeNamesMap, processingTasks }: TaskCardProps) {
+  const isProcessing = processingTasks?.has(task.id);
   const { t } = useLang();
   const pc = priorityColors[task.priority] || priorityColors.medium;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -67,13 +69,24 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
   }, [menuOpen]);
 
   return (
+    <>
+      <style>{`
+        @keyframes task-card-spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes task-card-pulse {
+          0%, 100% { border-color: #e0e0e0; }
+          50% { border-color: #1976d2; }
+        }
+      `}</style>
     <div
       style={{
         background: '#fff',
         borderRadius: '12px',
         padding: '14px 16px',
-        border: '1px solid #e0e0e0',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+        border: isProcessing ? '1px solid #1976d2' : '1px solid #e0e0e0',
+        boxShadow: isProcessing ? '0 0 8px rgba(25,118,210,0.3)' : '0 1px 3px rgba(0,0,0,0.06)',
+        animation: isProcessing ? 'task-card-pulse 2s ease-in-out infinite' : undefined,
         transition: 'transform 0.2s, boxShadow 0.2s',
         display: 'flex',
         flexDirection: 'column',
@@ -172,6 +185,19 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
               }}
             />
           )}
+          {/* Agent processing spinner */}
+          {isProcessing && (
+            <span
+              title="Agent working..."
+              style={{
+                width: '14px', height: '14px', borderRadius: '50%',
+                border: '2px solid #e0e0e0',
+                borderTopColor: '#1976d2',
+                animation: 'task-card-spin 0.8s linear infinite',
+                display: 'inline-block', flexShrink: 0,
+              }}
+            />
+          )}
         </div>
       </div>
 
@@ -248,5 +274,6 @@ export function TaskCard({ task, onEdit, onDelete, onStatusChange, projectsMap, 
         )}
       </div>
     </div>
+    </>
   );
 }

@@ -92,6 +92,7 @@ func main() {
 	taskH := handlers.NewTaskHandler(database.DB)
 
 	taskH.Hub = dashHub
+	taskH.MessageBus = messageBus
 	notifH := handlers.NewNotificationHandler(database.DB, dashHub)
 	notifH.Mailer = mail
 	taskH.Notifier = notifH
@@ -131,6 +132,8 @@ func main() {
 
 	hostSvc := plugin.NewHostService(messageBus, pluginMgr)
 	pluginH := handlers.NewPluginHandler(pluginMgr)
+
+	nodeAgentH := handlers.NewNodeAgentHandler(database.DB, messageBus)
 
 	// Router
 
@@ -191,6 +194,14 @@ func main() {
 	r.GET("/api/nodes/install.ps1", nodeH.InstallScriptPS1)
 
 	r.GET("/api/nodes/bin/:os/:arch", nodeH.DownloadBinary)
+
+	// Node-agent routes (auth via node_secret query param)
+
+	r.GET("/api/node/queue", nodeAgentH.ListQueue)
+	r.POST("/api/node/queue/:id/claim", nodeAgentH.ClaimQueueItem)
+	r.PUT("/api/node/queue/:id/status", nodeAgentH.UpdateQueueStatus)
+	r.GET("/api/node/tasks/:id", nodeAgentH.GetTask)
+	r.POST("/api/node/sessions", nodeAgentH.CreateSession)
 
 	// Auth required
 
