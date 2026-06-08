@@ -204,15 +204,50 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 			WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)`, queueID)
 		// Update task status when agent completes successfully
 		if req.Status == "completed" {
-			var triggerType string
-			h.DB.QueryRow(`SELECT trigger_type FROM task_agent_queue WHERE id = $1`, queueID).Scan(&triggerType)
-			targetStatus := "done"
-			if triggerType == "mention" {
+			var targetStatus string
+			h.DB.QueryRow(`
+				SELECT CASE WHEN t.assignee_type = 'agent_profile' AND t.assignee_id = q.agent_profile_id
+					THEN 'done' ELSE 'review' END
+				FROM task_agent_queue q
+				JOIN tasks t ON t.id = q.task_id
+				WHERE q.id = $1`, queueID).Scan(&targetStatus)
+			if targetStatus == "" {
 				targetStatus = "review"
 			}
 			h.DB.Exec(`UPDATE tasks SET status = $1, updated_at = $2
 				WHERE id = (SELECT task_id FROM task_agent_queue WHERE id = $3)
 				AND deleted_at IS NULL`, targetStatus, now, queueID)
+
+				// If went to review and assignee is a different agent_profile, trigger them to review
+				if targetStatus == "review" {
+					var taskID string
+					h.DB.QueryRow(`SELECT task_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&taskID)
+					if taskID != "" {
+						var assigneeType, assigneeID string
+						h.DB.QueryRow(`SELECT COALESCE(assignee_type,''), COALESCE(assignee_id,'') FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+							taskID).Scan(&assigneeType, &assigneeID)
+						if assigneeType == "agent_profile" && assigneeID != "" {
+							var completingAgentID string
+							h.DB.QueryRow(`SELECT agent_profile_id FROM task_agent_queue WHERE id = $1`, queueID).Scan(&completingAgentID)
+
+							if completingAgentID != assigneeID {
+								reviewQueueID := uuid.New().String()
+								reviewNow := time.Now()
+								h.DB.Exec(
+									`INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at)
+										 VALUES ($1, $2, $3, 'queued', 'review', $4, $4)`,
+									reviewQueueID, taskID, assigneeID, reviewNow,
+								)
+								h.DB.Exec(`UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1`,
+									assigneeID)
+
+								if h.Bus != nil {
+									autoProcessReview(h.DB, h.Bus, taskID, assigneeID, reviewQueueID, req.ResultSummary)
+								}
+							}
+						}
+					}
+				}
 		}
 	} else {
 		h.DB.Exec(`UPDATE task_agent_queue SET status = $1 WHERE id = $2`, req.Status, queueID)

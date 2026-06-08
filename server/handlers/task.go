@@ -406,6 +406,93 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	log.Printf("[Task] Auto-processed task %s → session %s on node %s", taskID[:8], sessionID[:8], nodeID[:8])
 }
 
+func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileID, queueID, resultSummary string) {
+	if bus == nil {
+		return
+	}
+
+	var title, description, workspaceID, nodeID, userID string
+	err := db.QueryRow(`
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id
+		FROM tasks t
+		JOIN agent_profiles ap ON ap.id = $2
+		WHERE t.id = $1 AND t.deleted_at IS NULL`,
+		taskID, agentProfileID,
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID)
+	if err != nil || nodeID == "" {
+		return
+	}
+
+	runtimeEndpoint := "runtime://" + nodeID
+	found := false
+	for _, ep := range bus.EndpointsByType(protocol.EndpointRuntime) {
+		if ep.ID == runtimeEndpoint {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+
+	sessionID := uuid.New().String()
+	now := time.Now()
+
+	reviewPrompt := fmt.Sprintf(
+		"Task: %s\n\nDescription: %s\n\nThis task was completed by another agent and needs your review. Review their work:\n\n---\n%s\n---\n\nApprove the work or provide feedback on what needs to change.",
+		title, description, resultSummary,
+	)
+	if resultSummary == "" {
+		reviewPrompt = fmt.Sprintf(
+			"Task: %s\n\nDescription: %s\n\nThis task needs your review. Please review the current state and either approve it or provide feedback on what needs to change.",
+			title, description,
+		)
+	}
+
+	bus.CreateSession(sessionID, map[string]protocol.MemberRole{
+		"system://api": protocol.RoleOwner,
+	})
+
+	db.Exec(
+		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
+		 VALUES ($1, $2, $3, 'claude', $4, $5, $6, $7, $7)`,
+		sessionID, userID, nodeID, models.SessionPending, reviewPrompt, workspaceID, now,
+	)
+
+	createEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgSessionCreate,
+		&protocol.Payload{
+			Agents:    []protocol.AgentSpec{{ID: "claude"}},
+			Workspace: workspaceID,
+			Context: map[string]any{
+				"queue_id":     queueID,
+				"task_id":      taskID,
+				"is_auto_task": true,
+				"trigger":      "review",
+			},
+		},
+	)
+	createEnv.SessionID = sessionID
+	bus.Deliver(createEnv)
+
+	time.Sleep(500 * time.Millisecond)
+	msgEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgMessage,
+		&protocol.Payload{
+			Content: []protocol.ContentBlock{protocol.TextBlock(reviewPrompt)},
+			Metadata: map[string]any{
+				"task_id":   taskID,
+				"auto_task": true,
+				"trigger":   "review",
+			},
+		},
+	)
+	msgEnv.SessionID = sessionID
+	bus.Deliver(msgEnv)
+
+	db.Exec(`UPDATE task_agent_queue SET status = 'processing', claimed_at = $1 WHERE id = $2`, now, queueID)
+
+	log.Printf("[Task] Auto-review task %s → session %s on node %s", taskID[:8], sessionID[:8], nodeID[:8])
+}
+
 func (h *TaskHandler) Get(c *gin.Context) {
 	workspaceID := c.Query("workspace_id")
 	isMember, _ := c.Get("is_workspace_member")
