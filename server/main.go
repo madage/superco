@@ -88,6 +88,7 @@ func main() {
 
 	agentSched := handlers.NewAgentScheduler(database.DB)
 	agentSched.Hub = dashHub
+	agentSched.MessageBus = messageBus
 
 	taskH := handlers.NewTaskHandler(database.DB)
 

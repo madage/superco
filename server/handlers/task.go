@@ -320,13 +320,19 @@ func (h *TaskHandler) autoAssignTask(taskID, workspaceID string) {
 }
 
 func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
-	if h.MessageBus == nil {
+	autoProcessTask(h.DB, h.MessageBus, taskID, agentProfileID, queueID)
+}
+
+// autoProcessTask creates a session on the message bus and delivers the task prompt
+// to the connected agent runtime. It is shared between TaskHandler and AgentScheduler.
+func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileID, queueID string) {
+	if bus == nil {
 		return
 	}
 
 	// Get task details + agent profile node_id + task owner
 	var title, description, workspaceID, nodeID, userID string
-	err := h.DB.QueryRow(`
+	err := db.QueryRow(`
 		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
@@ -340,7 +346,7 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 	// Check if the runtime is connected on the bus
 	runtimeEndpoint := "runtime://" + nodeID
 	found := false
-	for _, ep := range h.MessageBus.EndpointsByType(protocol.EndpointRuntime) {
+	for _, ep := range bus.EndpointsByType(protocol.EndpointRuntime) {
 		if ep.ID == runtimeEndpoint {
 			found = true
 			break
@@ -355,11 +361,11 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 	now := time.Now()
 	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s\n\nPlease work on this task.", title, description)
 
-	h.MessageBus.CreateSession(sessionID, map[string]protocol.MemberRole{
+	bus.CreateSession(sessionID, map[string]protocol.MemberRole{
 		"system://api": protocol.RoleOwner,
 	})
 
-	h.DB.Exec(
+	db.Exec(
 		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
 		 VALUES ($1, $2, $3, 'claude', $4, $5, $6, $7, $7)`,
 		sessionID, userID, nodeID, models.SessionPending, prompt, workspaceID, now,
@@ -373,7 +379,7 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 		},
 	)
 	createEnv.SessionID = sessionID
-	h.MessageBus.Deliver(createEnv)
+	bus.Deliver(createEnv)
 
 	// Brief wait for runtime to join, then send the task prompt
 	time.Sleep(500 * time.Millisecond)
@@ -387,10 +393,10 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 		},
 	)
 	msgEnv.SessionID = sessionID
-	h.MessageBus.Deliver(msgEnv)
+	bus.Deliver(msgEnv)
 
 	// Update queue to processing
-	h.DB.Exec(`UPDATE task_agent_queue SET status = 'processing', claimed_at = $1 WHERE id = $2`, now, queueID)
+	db.Exec(`UPDATE task_agent_queue SET status = 'processing', claimed_at = $1 WHERE id = $2`, now, queueID)
 
 	log.Printf("[Task] Auto-processed task %s → session %s on node %s", taskID[:8], sessionID[:8], nodeID[:8])
 }

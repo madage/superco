@@ -11,11 +11,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/coaether/server/middleware"
 	"github.com/coaether/server/models"
+	"github.com/coaether/server/protocol"
 )
 
 type AgentScheduler struct {
-	DB  *sql.DB
-	Hub *DashboardHub
+	DB         *sql.DB
+	Hub        *DashboardHub
+	MessageBus *protocol.MessageBus
 }
 
 func NewAgentScheduler(db *sql.DB) *AgentScheduler {
@@ -158,6 +160,9 @@ func (h *AgentScheduler) AutoAssign(c *gin.Context) {
 	if h.Hub != nil {
 		h.Hub.SignalChange("task_agent_queue")
 	}
+
+	// Trigger auto-processing (create session and deliver to runtime)
+	go h.processAgentTask(taskID, agentID, queueID)
 }
 
 // Claim marks a queue item as claimed by an agent.
@@ -339,4 +344,8 @@ func (h *AgentScheduler) ListAgentsWithLoad(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"agents": agents})
+}
+
+func (h *AgentScheduler) processAgentTask(taskID, agentProfileID, queueID string) {
+	autoProcessTask(h.DB, h.MessageBus, taskID, agentProfileID, queueID)
 }
