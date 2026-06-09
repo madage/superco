@@ -52,7 +52,7 @@ export interface AgentProfile {
   updated_at: string;
   // Harness fields
   protocol_version?: string;
-  capabilities?: Record<string, unknown>;
+  capabilities?: string[];
   permissions?: Record<string, unknown>;
   max_depth: number;
   max_review_loops: number;

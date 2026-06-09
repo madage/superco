@@ -51,6 +51,16 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
   const [selectedAgent, setSelectedAgent] = useState('');
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [maxConcurrency, setMaxConcurrency] = useState(1);
+  const availableCapabilities = [
+    { id: 'create_sub_task', label: 'create_sub_task', desc: lang === 'zh' ? '创建子任务' : 'Create sub-tasks' },
+    { id: 'assign_task', label: 'assign_task', desc: lang === 'zh' ? '分配任务' : 'Assign tasks' },
+    { id: 'review_task', label: 'review_task', desc: lang === 'zh' ? '审核任务' : 'Review tasks' },
+    { id: 'add_comment', label: 'add_comment', desc: lang === 'zh' ? '添加评论' : 'Add comments' },
+    { id: 'get_task_detail', label: 'get_task_detail', desc: lang === 'zh' ? '查看任务详情' : 'View task details' },
+    { id: 'list_sub_tasks', label: 'list_sub_tasks', desc: lang === 'zh' ? '列出子任务' : 'List sub-tasks' },
+    { id: 'update_task_status', label: 'update_task_status', desc: lang === 'zh' ? '更新任务状态' : 'Update task status' },
+  ];
+  const [capabilities, setCapabilities] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +88,12 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
     });
   }, [selectedNode]);
 
+  const toggleCapability = (cap: string) => {
+    setCapabilities(prev =>
+      prev.includes(cap) ? prev.filter(c => c !== cap) : [...prev, cap]
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !selectedNode || !selectedAgent) return;
@@ -93,6 +109,7 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
         node_id: selectedNode,
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
         max_concurrency: maxConcurrency,
+        capabilities: capabilities.length > 0 ? capabilities : undefined,
       });
       onCreated();
       onClose();
@@ -228,6 +245,31 @@ export function AgentForm({ onClose, onCreated }: AgentFormProps) {
               placeholder={t('abilityTagsPlaceholder')}
               style={inputStyle}
             />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, color: '#333', fontSize: '0.9em' }}>
+              {t('agentCapabilities')}
+            </label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {availableCapabilities.map(cap => (
+                <label key={cap.id} style={{
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                  background: capabilities.includes(cap.id) ? '#e3f2fd' : '#f5f5f5',
+                  border: capabilities.includes(cap.id) ? '1px solid #1976d2' : '1px solid #ddd',
+                  fontSize: '0.8em', userSelect: 'none',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={capabilities.includes(cap.id)}
+                    onChange={() => toggleCapability(cap.id)}
+                    style={{ margin: 0 }}
+                  />
+                  <span style={{ color: capabilities.includes(cap.id) ? '#1565c0' : '#666' }}>{cap.desc}</span>
+                </label>
+              ))}
+            </div>
           </div>
 
           {error && (

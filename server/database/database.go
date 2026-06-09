@@ -585,6 +585,10 @@ func Migrate() error {
 			// Harness: Node heartbeat for offline detection
 			"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP",
 
+	// Fix capabilities default from '{}' to '[]' (JSON array format expected by resolveAgentContext)
+	"ALTER TABLE agent_profiles ALTER COLUMN capabilities SET DEFAULT '[]'",
+	"UPDATE agent_profiles SET capabilities = '[]' WHERE capabilities = '{}'::jsonb OR capabilities IS NULL",
+
 	}
 
 	// Create Harness-related tables that may not exist yet

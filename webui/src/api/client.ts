@@ -226,7 +226,7 @@ export const agentProfiles = {
 
 
 
-  create: (data: { name: string; description?: string; system_prompt?: string; instructions?: string; agent_id: string; node_id?: string; tags?: string[]; max_concurrency?: number }) =>
+  create: (data: { name: string; description?: string; system_prompt?: string; instructions?: string; agent_id: string; node_id?: string; tags?: string[]; max_concurrency?: number; capabilities?: string[] }) =>
 
     request<{ id: string; status: string }>('/agents/profiles', {
 
@@ -238,7 +238,7 @@ export const agentProfiles = {
 
 
 
-  update: (id: string, data: Partial<{ name: string; description: string; system_prompt: string; instructions: string; avatar: string; agent_id: string; node_id: string; enabled: boolean; max_concurrency: number; tags: string[]; skills: string[]; review_sample_rate: number; review_timeout: number; max_review_loops: number; max_depth: number; completion_behavior: string }>) =>
+  update: (id: string, data: Partial<{ name: string; description: string; system_prompt: string; instructions: string; avatar: string; agent_id: string; node_id: string; enabled: boolean; max_concurrency: number; tags: string[]; skills: string[]; capabilities: string[]; review_sample_rate: number; review_timeout: number; max_review_loops: number; max_depth: number; completion_behavior: string }>) =>
 
     request<{ status: string }>(`/agents/profiles/${id}`, {
 

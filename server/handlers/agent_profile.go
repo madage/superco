@@ -123,6 +123,7 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 		Avatar       string          `json:"avatar,omitempty"`
 		Tags         json.RawMessage `json:"tags,omitempty"`
 		MaxConcurrency int             `json:"max_concurrency,omitempty"`
+		Capabilities json.RawMessage `json:"capabilities,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -145,11 +146,15 @@ func (h *AgentProfileHandler) Create(c *gin.Context) {
 	if len(tags) == 0 {
 		tags = json.RawMessage("[]")
 	}
+	capabilities := req.Capabilities
+	if len(capabilities) == 0 {
+		capabilities = json.RawMessage("[]")
+	}
 
 	_, err := h.DB.Exec(
-		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, max_concurrency, version, model, backend, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', '', 'cli', true, $13, $13)`,
-		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, req.MaxConcurrency, now,
+		`INSERT INTO agent_profiles (id, user_id, workspace_id, name, avatar, description, system_prompt, instructions, agent_id, node_id, tags, max_concurrency, capabilities, version, model, backend, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '', '', 'cli', true, $14, $14)`,
+		id, userID, workspaceID, req.Name, avatar, req.Description, req.SystemPrompt, req.Instructions, req.AgentID, req.NodeID, tags, req.MaxConcurrency, capabilities, now,
 	)
 	if err != nil {
 		log.Printf("[Profile] Create error: %v", err)
@@ -189,6 +194,7 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		NodeID      *string `json:"node_id,omitempty"`
 		Enabled     *bool   `json:"enabled,omitempty"`
 		MaxConcurrency *int             `json:"max_concurrency,omitempty"`
+		Capabilities *json.RawMessage `json:"capabilities,omitempty"`
 		Tags         *json.RawMessage `json:"tags,omitempty"`
 		Skills              *json.RawMessage `json:"skills,omitempty"`
 		ReviewSampleRate    *float64            `json:"review_sample_rate,omitempty"`
@@ -257,9 +263,12 @@ func (h *AgentProfileHandler) Update(c *gin.Context) {
 		if req.CompletionBehavior != nil {
 			addField("completion_behavior", *req.CompletionBehavior)
 		}
-	if req.Enabled != nil {
-		addField("enabled", *req.Enabled)
-	}
+		if req.Capabilities != nil {
+			addField("capabilities", *req.Capabilities)
+		}
+		if req.Enabled != nil {
+			addField("enabled", *req.Enabled)
+		}
 
 	if len(setClauses) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})

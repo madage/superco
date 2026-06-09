@@ -545,7 +545,17 @@ func (h *NodeAgentHandler) resolveAgentContext(auth *nodeAuthInfo, profileID, ta
 			ctx.AgentName = name
 			ctx.MaxDepth = maxDepth
 			var capsList []string
-			json.Unmarshal([]byte(capsJSON), &capsList)
+			if err := json.Unmarshal([]byte(capsJSON), &capsList); err != nil {
+				// Fallback: try parsing as object (old format: {} or {"tool_name":true})
+				var capsMap map[string]interface{}
+				if e2 := json.Unmarshal([]byte(capsJSON), &capsMap); e2 == nil {
+					for k, v := range capsMap {
+						if b, ok := v.(bool); ok && b {
+							capsList = append(capsList, k)
+						}
+					}
+				}
+			}
 			ctx.Capabilities = make(map[string]bool)
 			for _, c := range capsList {
 				ctx.Capabilities[c] = true
