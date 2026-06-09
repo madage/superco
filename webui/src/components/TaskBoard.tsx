@@ -9,7 +9,12 @@ import { TaskDetail } from './TaskDetail';
 import { MathConfirmDialog } from './MathConfirmDialog';
 import type { Task, TaskStatus, Project, UpdateTaskReq, Priority, AssigneeType } from '../types';
 
-const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'completed', 'review', 'done'];
+const columns: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
+
+// Map completed to done — they are the same status for board display purposes
+const columnGroup: Partial<Record<TaskStatus, TaskStatus>> = {
+  completed: 'done',
+};
 
 const columnLabels: Record<TaskStatus, TranslationKey> = {
   todo: 'taskStatusTodo',
@@ -149,8 +154,9 @@ export function TaskBoard({ initialTaskId, onTaskOpened }: { initialTaskId?: str
 
   const grouped = taskList.reduce(
     (acc, task) => {
-      if (!acc[task.status]) acc[task.status] = [];
-      acc[task.status].push(task);
+      const col = columnGroup[task.status] || task.status;
+      if (!acc[col]) acc[col] = [];
+      acc[col].push(task);
       return acc;
     },
     {} as Record<string, Task[]>,
