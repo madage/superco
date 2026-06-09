@@ -108,7 +108,7 @@ The system uses a **dual WebSocket channel** architecture:
 - **Tags** — Freely add/remove, supports filtering by tag
 - **Priority** — `urgent` > `high` > `medium` > `low`
 - **Task Comments** — Issue-style comments, postable by both users and agents, supports deletion
-- **Agent Auto-Processing** — When a task's assignee is an agent profile and status changes to `in_progress`, the agent automatically starts working; when a non-assignee agent completes a task, the assignee agent auto-reviews the result
+- **Agent Auto-Processing** — When a task's assignee is an agent profile and status changes to `in_progress`, the agent automatically starts working using both `system_prompt` (tool definitions, agent roles) and `instructions` (communication style) from the agent profile; when a non-assignee agent completes a task, the assignee agent auto-reviews the result. Sub-tasks created via Harness tools with `assignee_type=agent_profile` and no dependencies are auto-queued for immediate processing.
 - **DAG Auto-Progress** — Workflow tasks advance automatically: when a task completes, blocked tasks with all dependencies met are unblocked → agent tasks are auto-dispatched to queue → when all siblings are done, the parent task auto-closes and recursively advances the DAG
 - **Completion Behavior** — Each task supports `completion_behavior` field (`auto_done`/`auto_review`/`sample_review`/`needs_review`). When set to `auto_done`, agent completion automatically moves the task to `done` and triggers DAG propagation; otherwise moves to `review` for human/agent review
 - **Agent Queue Status** — Task Detail sidebar shows real-time agent queue status: queued/processing/completed/failed with color-coded indicators and result summary on hover
@@ -194,9 +194,10 @@ The system uses a **dual WebSocket channel** architecture:
 
 ### AI Runtime
 - **Language**: Go
-- **Backend Support**: Claude API (api mode) / Claude CLI (cli mode)
+- **Backend Support**: Claude API (api mode) / Claude CLI (cli mode) with stream-json protocol
 - **Protocol**: Message Bus Protocol (JSON Envelope over WebSocket)
 - **Session Management**: Runtime-level session isolation
+- **MCP Harness Integration**: Claude CLI sessions auto-generate `.mcp.json` config with coaether-harness MCP server, enabling native tool discovery and execution within Claude Code
 
 ---
 

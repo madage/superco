@@ -288,10 +288,45 @@ func (r *Runtime) isAutoTaskSession(sessionID string) bool {
 }
 
 // handleAutoTaskToolCall routes tool calls from auto-task sessions:
-// - Harness tools (create_sub_task, etc.) → server Harness API
-// - MCP tools (WebSearch, WebFetch, etc.) → executed locally
+// - MCP-prefixed harness tools (mcp__coaether-harness__create_sub_task) → server Harness API
+// - Plain harness tools (create_sub_task) → server Harness API
+// - Non-harness MCP tools → error with redirect hint to use coaether-harness tools
+// - Built-in tools → handled locally or returned as unavailable
 func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
-	if harnessTools[env.Payload.Tool] {
+	toolName := env.Payload.Tool
+
+	// Strip mcp__<server>__ prefix to get the base tool name
+	if strings.HasPrefix(toolName, "mcp__") {
+		baseName := toolName
+		if parts := strings.SplitN(toolName, "__", 3); len(parts) == 3 {
+			baseName = parts[2]
+		}
+
+		if harnessTools[baseName] {
+			// Route MCP-prefixed harness tool to the server Harness API
+			harnessEnv := *env
+			harnessEnv.Payload.Tool = baseName
+			r.handleHarnessToolCall(&harnessEnv)
+			return
+		}
+
+		// Non-harness MCP tool: return error with redirect hint
+		log.Printf("[Runtime] Rejecting non-harness MCP tool: %s (base: %s)", toolName, baseName)
+		if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+			cli.SendToolResult(env.SessionID, env.Payload.ToolUseID, map[string]interface{}{
+				"status": "error",
+				"error": map[string]interface{}{
+					"message": fmt.Sprintf(
+						"MCP tool '%s' is not available. You are a task-decomposition agent. Use ONLY mcp__coaether-harness__ tools: create_sub_task, list_sub_tasks, add_comment, get_task_detail, update_task_status.",
+						toolName,
+					),
+				},
+			})
+		}
+		return
+	}
+
+	if harnessTools[toolName] {
 		r.handleHarnessToolCall(env)
 	} else {
 		r.handleMCPToolCall(env)
@@ -728,7 +763,7 @@ func (r *Runtime) processQueueItem(item queueItem) {
 	sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
 	sessionReq := map[string]string{
 		"task_id":  item.TaskID,
-		"agent_id": "claude",
+		"agent_id": item.AgentProfileID,
 		"queue_id": item.ID,
 	}
 	sessionBody, _ := json.Marshal(sessionReq)
@@ -899,6 +934,12 @@ func (r *Runtime) registerBackends() {
 		cli.SetOnSessionComplete(func(sessionID, result, stopReason string, isError bool) {
 			r.handleSessionComplete(sessionID, result, stopReason, isError)
 		})
+		// Configure MCP server path so .mcp.json is written for each session
+		mcpServerPath := "mcp-server.exe"
+		if exe, err := os.Executable(); err == nil {
+			mcpServerPath = filepath.Join(filepath.Dir(exe), "mcp-server.exe")
+		}
+		cli.SetRuntimeConfig(r.ServerURL, r.NodeID, r.Secret, mcpServerPath)
 		r.RegisterBackend("claude", cli)
 		log.Println("[Runtime] Claude CLI backend enabled (stream-json)")
 	} else if api := backends.NewClaudeBackend(); api != nil {
@@ -1049,7 +1090,7 @@ Respond with exactly one of these two formats:
 		sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
 		sessionReq := map[string]string{
 			"task_id":  taskID,
-			"agent_id": "claude",
+			"agent_id": agentProfileID,
 			"queue_id": queueID,
 		}
 		sessionBody, _ := json.Marshal(sessionReq)

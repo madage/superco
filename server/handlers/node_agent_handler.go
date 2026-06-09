@@ -365,21 +365,17 @@ func (h *NodeAgentHandler) CreateSession(c *gin.Context) {
 		agentID = "claude"
 	}
 
-	prompt := fmt.Sprintf(`Task: %s
+		prompt := fmt.Sprintf(`Task ID: %s
+	Title: %s
 
-Description: %s
+	Description: %s
 
-You are an AI agent in a task management system. Available tools:
-- create_sub_task: Create a sub-task under the current task
-- assign_task: Assign a task to a user or agent
-- review_task: Review a completed task (approve or reject)
-- add_comment: Add a comment to a task
-- get_task_detail: Get task details
-- list_sub_tasks: List sub-tasks of a task
-- update_task_status: Update task status
+	You are a task-decomposition agent. Your ONLY job is to break down this task into sub-tasks and assign them to agents. Available MCP tools (use mcp__ prefix):
+	- list_sub_tasks: Check existing sub-tasks
+	- create_sub_task: Create ONE sub-task per call. REQUIRED fields: title, assignee_id (agent UUID), assignee_type (must be "agent_profile")
+	- add_comment: Summarize the decomposition plan after creating all sub-tasks
 
-DO NOT use Bash, Write, Read, WebSearch, or any file system tools — they are not available.
-Use ONLY the tools listed above to manage tasks.`, title, description)
+	CRITICAL: For EVERY create_sub_task call, you MUST provide BOTH assignee_id AND assignee_type="agent_profile". Sub-tasks without assignments will NOT start. Do NOT use filesystem/shell tools.`, req.TaskID, title, description)
 
 	sessionID := uuid.New().String()
 	now := time.Now()
@@ -578,19 +574,21 @@ func (h *NodeAgentHandler) resolveAgentContext(auth *nodeAuthInfo, profileID, ta
 		}
 	}
 
-	// Get workflow info from task
+	// Get workflow info and user_id from task
 	var workflowID *string
 	var depth int
+	var userID string
 	maxDepth := ctx.MaxDepth
 	h.DB.QueryRow(
-		`SELECT workflow_id, depth, COALESCE(max_depth, $1) FROM tasks WHERE id = $2 AND deleted_at IS NULL`,
+		`SELECT workflow_id, depth, COALESCE(max_depth, $1), user_id FROM tasks WHERE id = $2 AND deleted_at IS NULL`,
 		maxDepth, taskID,
-	).Scan(&workflowID, &depth, &maxDepth)
+	).Scan(&workflowID, &depth, &maxDepth, &userID)
 	if workflowID != nil && *workflowID != "" {
 		ctx.WorkflowID = workflowID
 	}
 	ctx.Depth = depth
 	ctx.MaxDepth = maxDepth
+	ctx.UserID = userID
 
 	return ctx
 }

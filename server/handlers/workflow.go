@@ -337,12 +337,18 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			cb = models.CompletionNeedsReview
 		}
 
+		// Inherit workspace_id from parent task
+		var workspaceID sql.NullString
+		if ctx.TaskID != nil {
+			h.DB.QueryRow(`SELECT workspace_id FROM tasks WHERE id = $1`, *ctx.TaskID).Scan(&workspaceID)
+		}
+
 		_, err := h.DB.Exec(
-			`INSERT INTO tasks (id, user_id, title, description, status, workflow_id, depth, max_depth,
+			`INSERT INTO tasks (id, user_id, parent_id, title, description, status, workspace_id, workflow_id, depth, max_depth,
 				completion_behavior, parallel_group, assignee_id, assignee_type, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, 'todo', $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
-			taskID, ctx.AgentProfileID, p.Title, p.Description,
-			ctx.WorkflowID, ctx.Depth+1, ctx.MaxDepth,
+			 VALUES ($1, $2, $3, $4, $5, 'todo', $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`,
+			taskID, ctx.UserID, ctx.TaskID, p.Title, p.Description,
+			workspaceID, ctx.WorkflowID, ctx.Depth+1, ctx.MaxDepth,
 			cb, p.ParallelGroup, p.AssigneeID, p.AssigneeType, now,
 		)
 		if err != nil {
@@ -368,6 +374,21 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		// Mark blocked if has dependencies
 		if len(p.DependsOn) > 0 {
 			h.DAGEngine.SetTaskBlocked(taskID)
+		}
+
+		// Auto-start: if assigned to an agent and not blocked by dependencies,
+		// create a queue entry so the runtime picks it up.
+		if p.AssigneeType == "agent_profile" && p.AssigneeID != "" && len(p.DependsOn) == 0 {
+			queueID := uuid.New().String()
+			h.DB.Exec(
+				"INSERT INTO task_agent_queue (id, task_id, agent_profile_id, status, trigger_type, assigned_at, created_at) VALUES ($1, $2, $3, 'queued', 'sub_task', $4, $4)",
+				queueID, taskID, p.AssigneeID, now,
+			)
+			h.DB.Exec("UPDATE agent_profiles SET current_load = current_load + 1 WHERE id = $1", p.AssigneeID)
+			if h.Hub != nil {
+				h.Hub.SignalChange("task_agent_queue")
+			}
+			log.Printf("[Harness] Auto-queued subtask %s for agent %s", taskID[:8], p.AssigneeID[:8])
 		}
 
 		if h.Hub != nil {
@@ -397,7 +418,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 		_, err := h.DB.Exec(
 			`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
-			commentID, p.TaskID, ctx.AgentProfileID, ctx.AgentProfileID, p.Content, now,
+			commentID, p.TaskID, ctx.UserID, ctx.AgentProfileID, p.Content, now,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add comment: %w", err)
@@ -551,7 +572,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			h.DB.Exec(
 				`INSERT INTO task_comments (id, task_id, user_id, agent_profile_id, content, is_agent_comment, created_at, updated_at)
 				 VALUES ($1, $2, $3, $4, $5, true, $6, $6)`,
-				commentID, p.TaskID, ctx.AgentProfileID, ctx.AgentProfileID, p.Comment, time.Now(),
+				commentID, p.TaskID, ctx.UserID, ctx.AgentProfileID, p.Comment, time.Now(),
 			)
 		}
 

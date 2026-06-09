@@ -328,11 +328,16 @@ func (h *TaskHandler) processAgentTask(taskID, agentProfileID, queueID string) {
 // to the connected agent runtime. It is shared between TaskHandler and AgentScheduler.
 
 // buildTaskPrompt constructs the work prompt combining task details with agent instructions.
-func buildTaskPrompt(title, description, instructions string) string {
-	prompt := fmt.Sprintf("Task: %s\n\nDescription: %s", title, description)
+func buildTaskPrompt(title, description, instructions, systemPrompt string) string {
+	prompt := ""
+	if systemPrompt != "" {
+		prompt += fmt.Sprintf("SYSTEM: %s\n\n", systemPrompt)
+	}
+	prompt += fmt.Sprintf("Task: %s\n\nDescription: %s", title, description)
 	if instructions != "" {
 		prompt += "\n\nInstructions: " + instructions
 	}
+	prompt += fmt.Sprintf("\n\nCRITICAL: Use ONLY the available MCP harness tools (mcp__coaether-harness__ prefix) to complete your work. Do NOT use filesystem tools (Bash, Glob, Grep, Read, Write, Edit). If you are a decomposition agent, your ONLY job is to break this task into sub-tasks using create_sub_task. Do NOT attempt to execute task steps yourself.")
 	return prompt
 }
 
@@ -342,14 +347,14 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	}
 
 	// Get task details + agent profile node_id + task owner
-	var title, description, workspaceID, nodeID, userID, instructions string
+	var title, description, workspaceID, nodeID, userID, instructions, systemPrompt string
 	err := db.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,'')
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,''), COALESCE(ap.system_prompt,'')
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions, &systemPrompt)
 	if err != nil || nodeID == "" {
 		return // can't process without a node
 	}
@@ -370,7 +375,7 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	// Create a session
 	sessionID := uuid.New().String()
 	now := time.Now()
-	prompt := buildTaskPrompt(title, description, instructions)
+	prompt := buildTaskPrompt(title, description, instructions, systemPrompt)
 
 	bus.CreateSession(sessionID, map[string]protocol.MemberRole{
 		"system://api": protocol.RoleOwner,
@@ -378,19 +383,20 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 
 	db.Exec(
 		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
-		 VALUES ($1, $2, $3, 'claude', $4, $5, $6, $7, $7)`,
-		sessionID, userID, nodeID, models.SessionPending, prompt, workspaceID, now,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+		sessionID, userID, nodeID, agentProfileID, models.SessionPending, prompt, workspaceID, now,
 	)
 
 	// Send session.create to the runtime
 	createEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgSessionCreate,
 		&protocol.Payload{
-			Agents:    []protocol.AgentSpec{{ID: "claude"}},
+			Agents:    []protocol.AgentSpec{{ID: agentProfileID}},
 			Workspace: workspaceID,
 			Context: map[string]any{
-				"queue_id":    queueID,
-				"task_id":     taskID,
-				"is_auto_task": true,
+				"queue_id":         queueID,
+				"task_id":          taskID,
+				"is_auto_task":     true,
+				"agent_profile_id": agentProfileID,
 			},
 		},
 	)
@@ -403,8 +409,10 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 		&protocol.Payload{
 			Content: []protocol.ContentBlock{protocol.TextBlock(prompt)},
 			Metadata: map[string]any{
-				"task_id":      taskID,
-				"auto_task":    true,
+				"task_id":          taskID,
+				"auto_task":        true,
+				"queue_id":         queueID,
+				"agent_profile_id": agentProfileID,
 			},
 		},
 	)
@@ -422,14 +430,14 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 		return
 	}
 
-	var title, description, workspaceID, nodeID, userID, instructions string
+	var title, description, workspaceID, nodeID, userID, instructions, systemPrompt string
 	err := db.QueryRow(`
-		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,'')
+		SELECT t.title, COALESCE(t.description,''), t.workspace_id, ap.node_id, t.user_id, COALESCE(ap.instructions,''), COALESCE(ap.system_prompt,'')
 		FROM tasks t
 		JOIN agent_profiles ap ON ap.id = $2
 		WHERE t.id = $1 AND t.deleted_at IS NULL`,
 		taskID, agentProfileID,
-	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions)
+	).Scan(&title, &description, &workspaceID, &nodeID, &userID, &instructions, &systemPrompt)
 	if err != nil || nodeID == "" {
 		return
 	}
@@ -449,7 +457,7 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 	sessionID := uuid.New().String()
 	now := time.Now()
 
-	reviewPrompt := buildTaskPrompt(title, description, instructions)
+	reviewPrompt := buildTaskPrompt(title, description, instructions, systemPrompt)
 	if resultSummary != "" {
 		reviewPrompt += "\n\nCompleted work to review:\n\n---\n" + resultSummary + "\n---\n\nApprove the work or provide feedback on what needs to change."
 	}
@@ -460,19 +468,20 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 
 	db.Exec(
 		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
-		 VALUES ($1, $2, $3, 'claude', $4, $5, $6, $7, $7)`,
-		sessionID, userID, nodeID, models.SessionPending, reviewPrompt, workspaceID, now,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+		sessionID, userID, nodeID, agentProfileID, models.SessionPending, reviewPrompt, workspaceID, now,
 	)
 
 	createEnv := protocol.NewEnvelope("system://api", runtimeEndpoint, protocol.MsgSessionCreate,
 		&protocol.Payload{
-			Agents:    []protocol.AgentSpec{{ID: "claude"}},
+			Agents:    []protocol.AgentSpec{{ID: agentProfileID}},
 			Workspace: workspaceID,
 			Context: map[string]any{
-				"queue_id":     queueID,
-				"task_id":      taskID,
-				"is_auto_task": true,
-				"trigger":      "review",
+				"queue_id":         queueID,
+				"task_id":          taskID,
+				"is_auto_task":     true,
+				"trigger":          "review",
+				"agent_profile_id": agentProfileID,
 			},
 		},
 	)
@@ -484,9 +493,11 @@ func autoProcessReview(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfil
 		&protocol.Payload{
 			Content: []protocol.ContentBlock{protocol.TextBlock(reviewPrompt)},
 			Metadata: map[string]any{
-				"task_id":   taskID,
-				"auto_task": true,
-				"trigger":   "review",
+				"task_id":          taskID,
+				"auto_task":        true,
+				"trigger":          "review",
+				"queue_id":         queueID,
+				"agent_profile_id": agentProfileID,
 			},
 		},
 	)

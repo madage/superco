@@ -22,16 +22,28 @@ type OnSessionComplete func(sessionID string, result string, stopReason string, 
 
 // ClaudeCLIBackend manages persistent claude subprocesses via stream-json protocol.
 type ClaudeCLIBackend struct {
-	command    string
-	timeout    time.Duration
-	sessions   map[string]*claudeSession
-	sendFunc   func(*protocol.Envelope)
-	onComplete OnSessionComplete
-	mu         sync.Mutex
+	command       string
+	timeout       time.Duration
+	sessions      map[string]*claudeSession
+	sendFunc      func(*protocol.Envelope)
+	onComplete    OnSessionComplete
+	serverURL     string
+	nodeID        string
+	nodeSecret    string
+	mcpServerPath string
+	mu            sync.Mutex
 }
 
 func (b *ClaudeCLIBackend) SetOnSessionComplete(fn OnSessionComplete) {
 	b.onComplete = fn
+}
+
+// SetRuntimeConfig sets the runtime connection info needed by the MCP server.
+func (b *ClaudeCLIBackend) SetRuntimeConfig(serverURL, nodeID, nodeSecret, mcpServerPath string) {
+	b.serverURL = serverURL
+	b.nodeID = nodeID
+	b.nodeSecret = nodeSecret
+	b.mcpServerPath = mcpServerPath
 }
 
 type claudeSession struct {
@@ -45,6 +57,10 @@ type claudeSession struct {
 	sessionID    string
 	lastActivity time.Time
 	completed    bool
+	// Session context for MCP tool routing
+	taskID    string
+	queueID   string
+	profileID string
 }
 
 func (s *claudeSession) setCompleted() {
@@ -97,7 +113,11 @@ func (b *ClaudeCLIBackend) HandleMessage(env *protocol.Envelope) (*protocol.Enve
 	b.mu.Lock()
 	sess, exists := b.sessions[sessionID]
 	if !exists {
-		sess = b.startSession(sessionID)
+		// Extract session context from metadata for MCP tool routing
+		taskID, _ := getMetaStr(env.Payload.Metadata, "task_id")
+		queueID, _ := getMetaStr(env.Payload.Metadata, "queue_id")
+		profileID, _ := getMetaStr(env.Payload.Metadata, "agent_profile_id")
+		sess = b.startSession(sessionID, taskID, queueID, profileID)
 		if sess == nil {
 			b.mu.Unlock()
 			return protocol.NewEnvelope("", "", protocol.MsgError,
@@ -153,7 +173,7 @@ type assistantContentBlock struct {
 
 // ---- session lifecycle ----
 
-func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
+func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID string) *claudeSession {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := []string{
@@ -171,6 +191,32 @@ func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
 		log.Printf("[ClaudeCLI] Failed to create workspace %s: %v", wsDir, err)
 	} else {
 		cmd.Dir = wsDir
+
+		// Write .mcp.json so Claude Code discovers the coaether harness tools
+		if b.mcpServerPath != "" {
+			mcpConfig := fmt.Sprintf(`{
+  "mcpServers": {
+    "coaether-harness": {
+      "type": "stdio",
+      "command": "%s",
+      "env": {
+        "COAETHER_SERVER_URL": "%s",
+        "COAETHER_NODE_ID": "%s",
+        "COAETHER_NODE_SECRET": "%s",
+        "COAETHER_TASK_ID": "%s",
+        "COAETHER_QUEUE_ID": "%s",
+        "COAETHER_PROFILE_ID": "%s"
+      }
+    }
+  }
+}`, escJSON(b.mcpServerPath), escJSON(b.serverURL), escJSON(b.nodeID), escJSON(b.nodeSecret), escJSON(taskID), escJSON(queueID), escJSON(profileID))
+			mcpPath := filepath.Join(wsDir, ".mcp.json")
+			if err := os.WriteFile(mcpPath, []byte(mcpConfig), 0644); err != nil {
+				log.Printf("[ClaudeCLI] Failed to write .mcp.json: %v", err)
+			} else {
+				log.Printf("[ClaudeCLI] Wrote MCP config for session %s", sessionID[:8])
+			}
+		}
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -211,6 +257,9 @@ func (b *ClaudeCLIBackend) startSession(sessionID string) *claudeSession {
 		cancel:       cancel,
 		sessionID:    sessionID,
 		lastActivity: time.Now(),
+		taskID:       taskID,
+		queueID:      queueID,
+		profileID:    profileID,
 	}
 
 	// Stderr logging
@@ -831,4 +880,27 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// getMetaStr extracts a string from protocol metadata.
+func getMetaStr(m map[string]any, key string) (string, bool) {
+	if m == nil {
+		return "", false
+	}
+	v, ok := m[key]
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok
+}
+
+// escJSON escapes a string for safe inclusion in a JSON string value.
+func escJSON(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	s = strings.ReplaceAll(s, "\t", `\t`)
+	return s
 }

@@ -10,6 +10,7 @@ import (
 type AgentContext struct {
 	AgentProfileID string
 	AgentName      string
+	UserID         string
 	WorkflowID     *string
 	TaskID         *string
 	Depth          int

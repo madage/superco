@@ -1172,7 +1172,7 @@ GET /api/agents/runtimes
   "task_id": "task-uuid",
   "agent_profile_id": "profile-uuid",
   "status": "queued | claimed | processing | completed | failed",
-  "trigger_type": "status_change | mention",
+  "trigger_type": "status_change | mention | sub_task",
   "metadata": { "comment_id": "uuid", "comment_content": "..." },
   "assigned_at": "datetime",
   "claimed_at": "datetime | null",
@@ -2539,6 +2539,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
 
 **自动派发：** 解阻塞时，如果任务的 `assignee_type=agent_profile` 且智能体有空闲容量，自动创建 `task_agent_queue` 条目（`trigger_type=status_change`）并递增负载计数。
 
+**子任务自动入队：** 使用 `create_sub_task` 创建子任务时，如果 `assignee_type=agent_profile` 且未设置 `depends_on`（无前置依赖），系统自动创建队列条目（`trigger_type=sub_task`），无需等待 DAG 解阻塞。
+
 **自动关闭父任务：** 解阻塞后检查当前任务的父任务的所有子任务是否均已 `done`。若是，自动将父任务设为 `done`，并递归调用 DAGEngine 继续推进父任务的依赖链。
 
 **入口：** DAGEngine.OnTaskCompleted(taskID) 在以下场景被调用：
@@ -2600,6 +2602,8 @@ DAGEngine 在工作流执行过程中自动管理任务依赖：
   "completion_behavior": "auto_done | auto_review | sample_review | needs_review"
 }
 ```
+
+**说明：** 创建的子任务自动继承父任务的 `workspace_id`。如果 `assignee_type=agent_profile` 且未指定 `depends_on`，系统自动将子任务加入智能体队列（`trigger_type=sub_task`），智能体将立即开始处理。
 
 **assign_task:**
 
