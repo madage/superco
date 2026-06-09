@@ -111,7 +111,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
         setCommandDialog({ command: res.command, command_ps1: res.command_ps1 || res.command });
       }
     } catch (err) {
-      setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
+      setErrorDialog(err instanceof Error ? err.message : 'Start failed');
     }
   }, [t]);
 
@@ -130,7 +130,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
       try {
         await nodesApi.stop(nodeID);
       } catch (err) {
-        setErrorDialog(err instanceof Error ? err.message : t('nodeNoPermission'));
+        setErrorDialog(err instanceof Error ? err.message : 'Stop failed');
         setManaging(null);
       }
     } else {
@@ -188,7 +188,7 @@ export function NodeList({ nodes, onSelect }: NodeListProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ fontSize: '3em', marginBottom: '16px', color: '#e53935' }}>✕</div>
-            <h3 style={{ margin: '0 0 12px', color: '#1a1a2e', fontSize: '1.2em' }}>{t('nodeNoPermission')}</h3>
+            <h3 style={{ margin: '0 0 12px', color: '#1a1a2e', fontSize: '1.2em' }}>Error</h3>
             <p style={{ margin: '0 0 24px', color: '#666', fontSize: '0.95em', lineHeight: 1.5 }}>{errorDialog}</p>
             <button
               onClick={() => setErrorDialog(null)}

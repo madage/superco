@@ -839,12 +839,6 @@ func (h *NodeHandler) DownloadBinary(c *gin.Context) {
 func (h *NodeHandler) StartNode(c *gin.Context) {
 	nodeID := c.Param("id")
 
-	// Permission check: node owner or workspace admin
-	if ok, msg := h.canControlNode(c, nodeID); !ok {
-		c.JSON(http.StatusForbidden, gin.H{"error": msg})
-		return
-	}
-
 	// Generate a fresh node_secret for this node
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
@@ -890,21 +884,33 @@ func (h *NodeHandler) StartNode(c *gin.Context) {
 func (h *NodeHandler) StopNode(c *gin.Context) {
 	nodeID := c.Param("id")
 
-	// Permission check: node owner or workspace admin
-	if ok, msg := h.canControlNode(c, nodeID); !ok {
-		c.JSON(http.StatusForbidden, gin.H{"error": msg})
-		return
+	// Server-side enforcement: disable all agent profiles for this node
+	if _, err := h.DB.Exec(
+		`UPDATE agent_profiles SET enabled = false, current_load = 0 WHERE node_id = $1`,
+		nodeID,
+	); err != nil {
+		log.Printf("[StopNode] Failed to disable profiles for node %s: %v", nodeID[:8], err)
+	}
+
+	// Fail all active queue items for agents on this node
+	if _, err := h.DB.Exec(
+		`UPDATE task_agent_queue SET status = 'failed', result_summary = '节点已停止', completed_at = NOW()
+		 WHERE agent_profile_id IN (SELECT id FROM agent_profiles WHERE node_id = $1)
+		 AND status IN ('queued', 'claimed', 'processing')`,
+		nodeID,
+	); err != nil {
+		log.Printf("[StopNode] Failed to fail queue items for node %s: %v", nodeID[:8], err)
+	}
+
+	// Signal changes via websocket
+	if h.Hub != nil {
+		h.Hub.SignalChange("agent_profiles")
+		h.Hub.SignalChange("task_agent_queue")
 	}
 
 	// Stop via Message Bus (works for all connected runtime nodes)
 	if h.Bus == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "message bus not available"})
-		return
-	}
-
-	ep := h.Bus.GetEndpoint("runtime://" + nodeID)
-	if ep == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "node is not connected"})
+		c.JSON(http.StatusOK, gin.H{"status": "stopped"})
 		return
 	}
 
@@ -912,11 +918,9 @@ func (h *NodeHandler) StopNode(c *gin.Context) {
 	delivered := h.Bus.Deliver(env)
 	if delivered > 0 {
 		log.Printf("[StopNode] Sent stop command via bus to %s", nodeID)
-		c.JSON(http.StatusOK, gin.H{"status": "stopped"})
-		return
 	}
 
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to deliver stop command"})
+	c.JSON(http.StatusOK, gin.H{"status": "stopped"})
 }
 
 func (h *NodeHandler) canControlNode(c *gin.Context, nodeID string) (bool, string) {
