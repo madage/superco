@@ -3,9 +3,17 @@ import { useLang } from '../i18n/context';
 import { agentQueue as agentQueueApi, tasks as tasksApi } from '../api/client';
 import { useResourceSync } from '../hooks/useResourceSync';
 import { TaskDetail } from './TaskDetail';
-import type { AgentQueueItem, Task } from '../types';
+import type { AgentQueueItem, Task, AgentLoadInfo } from '../types';
 
 const statusColors: Record<string, string> = {
+  queued: '#9e9e9e',
+  claimed: '#1976d2',
+  processing: '#f9a825',
+  completed: '#388e3c',
+  failed: '#d32f2f',
+};
+
+const agentLoadColors: Record<string, string> = {
   queued: '#9e9e9e',
   claimed: '#1976d2',
   processing: '#f9a825',
@@ -19,6 +27,9 @@ export function AgentQueuePanel() {
   const [loading, setLoading] = useState(true);
   const [taskTitles, setTaskTitles] = useState<Record<string, string>>({});
   const [taskDetailTask, setTaskDetailTask] = useState<Task | null>(null);
+  const [agentLoads, setAgentLoads] = useState<AgentLoadInfo[]>([]);
+  const [showAgentLoad, setShowAgentLoad] = useState(false);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
 
   const fetchQueue = useCallback(async () => {
     try {
@@ -42,6 +53,27 @@ export function AgentQueuePanel() {
       setLoading(false);
     }
   }, []);
+
+  const fetchAgentLoads = useCallback(async () => {
+    try {
+      const res = await agentQueueApi.listAgentsWithLoad();
+      setAgentLoads(res.agents);
+    } catch { /* silently fail */ }
+  }, []);
+
+  useEffect(() => { fetchAgentLoads(); }, [fetchAgentLoads]);
+
+  const handleClaim = async (itemId: string) => {
+    setClaimingId(itemId);
+    try {
+      await agentQueueApi.claim(itemId);
+      await fetchQueue();
+    } catch (err) {
+      alert('Failed to claim queue item');
+    } finally {
+      setClaimingId(null);
+    }
+  };
 
   const statusLabel = (status: string): string => {
     const labels: Record<string, string> = {
@@ -89,6 +121,54 @@ export function AgentQueuePanel() {
           )}
         </h3>
       </div>
+
+      {/* Agent load overview */}
+      {agentLoads.length > 0 && (
+        <div style={{ marginBottom: '16px' }}>
+          <button
+            onClick={() => setShowAgentLoad(!showAgentLoad)}
+            style={{
+              background: 'none', border: 'none', color: '#555', cursor: 'pointer',
+              fontSize: '0.85em', fontWeight: 600, padding: '4px 0',
+              display: 'flex', alignItems: 'center', gap: '6px',
+            }}
+          >
+            {showAgentLoad ? '▼' : '▶'} {lang === 'zh' ? '智能体负载' : 'Agent Load'} ({agentLoads.length})
+          </button>
+          {showAgentLoad && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+              {agentLoads.map(a => (
+                <div key={a.id} style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  padding: '8px 12px', borderRadius: '8px',
+                  background: a.available ? '#f0fdf4' : '#fef2f2',
+                  border: '1px solid', borderColor: a.available ? '#bbf7d0' : '#fecaca',
+                  minWidth: '160px',
+                }}>
+                  <span style={{ fontSize: '1.1em' }}>{a.avatar || '🤖'}</span>
+                  <div>
+                    <div style={{ fontSize: '0.85em', fontWeight: 500, color: '#333' }}>{a.name}</div>
+                    <div style={{ fontSize: '0.75em', color: '#888' }}>
+                      {a.current_load}/{a.max_concurrency}
+                      {a.available ? '' : (lang === 'zh' ? ' 繁忙' : ' busy')}
+                    </div>
+                  </div>
+                  <div style={{
+                    marginLeft: 'auto', width: '40px', height: '4px', borderRadius: '2px',
+                    background: '#e0e0e0', overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      height: '100%', borderRadius: '2px',
+                      background: a.available ? '#22c55e' : '#ef4444',
+                      width: `${Math.min(100, (a.current_load / Math.max(1, a.max_concurrency)) * 100)}%`,
+                    }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {queue.length === 0 && (
         <div style={{ textAlign: 'center', color: '#999', padding: '48px 24px', fontSize: '0.95em' }}>
@@ -153,6 +233,17 @@ export function AgentQueuePanel() {
                     }}>
                       {statusLabel(item.status)}
                     </span>
+                    {item.status === 'queued' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleClaim(item.id); }}
+                        disabled={claimingId === item.id}
+                        style={{
+                          padding: '4px 10px', borderRadius: '4px', border: '1px solid #1976d2',
+                          background: '#fff', color: '#1976d2', cursor: claimingId === item.id ? 'default' : 'pointer',
+                          fontSize: '0.75em', fontWeight: 500, whiteSpace: 'nowrap',
+                        }}
+                      >{claimingId === item.id ? '...' : (lang === 'zh' ? '认领' : 'Claim')}</button>
+                    )}
                   </div>
                 ))}
               </div>

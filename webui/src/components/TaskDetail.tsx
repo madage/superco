@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLang } from '../i18n/context';
-import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi, agentQueue as agentQueueApi } from '../api/client';
+import { tasks as tasksApi, projects as projectsApi, workspaceMembers as workspaceMembersApi, agentProfiles as agentProfilesApi, comments as commentsApi, agentQueue as agentQueueApi, workflows as workflowsApi } from '../api/client';
 import { useWorkspace } from '../hooks/WorkspaceContext';
-import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment } from '../types';
+import type { Task, TaskStatus, Project, Priority, AssigneeType, WorkspaceMember, AgentProfile, Comment, Workflow } from '../types';
 
 interface TaskDetailProps {
   task: Task;
@@ -41,6 +41,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [nameMap, setNameMap] = useState<Record<string, string>>({});
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
 
   // Comments
   const [comments, setComments] = useState<Comment[]>([]);
@@ -107,6 +108,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
       const profilesRes = await agentProfilesApi.list().catch(() => ({ profiles: [] as AgentProfile[] }));
       setAgentProfiles(profilesRes.profiles);
       profilesRes.profiles.forEach(p => { names[p.id] = p.name; });
+      const wfRes = await workflowsApi.list().catch(() => ({ workflows: [] as Workflow[] }));
+      setWorkflows(wfRes.workflows);
       setNameMap(names);
     };
     load();
@@ -186,6 +189,35 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
   const handleProjectChange = (projectId: string | null) => {
     setCurrentTask(prev => ({ ...prev, project_id: projectId ?? undefined }));
     saveField({ project_id: projectId ?? null });
+  };
+
+  const handleWorkflowChange = async (workflowId: string | null) => {
+    if (!workflowId) return;
+    try {
+      await workflowsApi.attach({ task_id: currentTask.id, workflow_id: workflowId });
+      const refreshed = await tasksApi.get(currentTask.id);
+      setCurrentTask(refreshed);
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to attach task to workflow', err);
+      alert('Failed to attach task to workflow');
+    }
+  };
+
+  const [triggeringAgent, setTriggeringAgent] = useState(false);
+  const handleTriggerAgent = async () => {
+    setTriggeringAgent(true);
+    try {
+      await agentQueueApi.autoAssign(currentTask.id);
+      const refreshed = await tasksApi.get(currentTask.id);
+      setCurrentTask(refreshed);
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to trigger agent', err);
+      alert('Failed to trigger agent');
+    } finally {
+      setTriggeringAgent(false);
+    }
   };
 
   const handleParentChange = (parentId: string | null) => {
@@ -1082,6 +1114,23 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                   ))}
                 </optgroup>
               </select>
+              {/* Trigger agent button */}
+              {currentTask.assignee_type === 'agent_profile' && (
+                <button
+                  onClick={handleTriggerAgent}
+                  disabled={triggeringAgent || isProcessing}
+                  style={{
+                    width: '100%', marginTop: '6px', padding: '5px 0',
+                    borderRadius: '6px', border: '1px solid #1976d2',
+                    background: '#e3f2fd', color: '#1976d2',
+                    cursor: (triggeringAgent || isProcessing) ? 'default' : 'pointer',
+                    fontSize: '0.8em', fontWeight: 500,
+                    opacity: (triggeringAgent || isProcessing) ? 0.6 : 1,
+                  }}
+                >
+                  {triggeringAgent ? '...' : isProcessing ? (lang === 'zh' ? '处理中...' : 'Processing...') : (lang === 'zh' ? '触发智能体处理' : 'Trigger Agent')}
+                </button>
+              )}
             </div>
 
             {/* Delegated Assignees */}
@@ -1236,6 +1285,21 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 <option value="">{t('taskDetailNoneTopLevel')}</option>
                 {allTasks.map(t => (
                   <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Workflow selector */}
+            <div>
+              <div style={sidebarLabelStyle}>{t('taskWorkflow')}</div>
+              <select
+                value={currentTask.workflow_id || ''}
+                onChange={(e) => handleWorkflowChange(e.target.value || null)}
+                style={editableSelectStyle}
+              >
+                <option value="">{(lang === 'zh' ? '无工作流' : 'No workflow')}</option>
+                {workflows.filter(w => w.status === 'active').map(w => (
+                  <option key={w.id} value={w.id}>{w.title}</option>
                 ))}
               </select>
             </div>
