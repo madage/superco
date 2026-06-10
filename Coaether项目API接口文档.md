@@ -1806,7 +1806,7 @@ POST /api/node/tool-call?node_id=<node_id>&node_secret=<secret>
 }
 ```
 
-**说明：** 运行时调用此接口执行工具。服务端通过 Harness Policy Engine 进行权限检查、执行注册的 Executor，并记录审计日志。支持的工具有：`create_sub_task`、`assign_task`、`review_task`、`add_comment`、`get_task_detail`、`list_sub_tasks`、`update_task_status`。
+**说明：** 运行时调用此接口执行工具。服务端通过 Harness Policy Engine 进行权限检查、执行注册的 Executor，并记录审计日志。支持的工具有：`create_sub_task`、`propose_decomposition_plan`、`assign_task`、`review_task`、`add_comment`、`get_task_detail`、`list_sub_tasks`、`update_task_status`。
 
 **响应：**
 

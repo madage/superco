@@ -126,19 +126,30 @@ func deny(code, message, suggestion string) *CheckResult {
 }
 
 // HasCapability checks whether an agent's declared capabilities include a specific tool.
+// Supports both flat array ["tool1","tool2"] and object {"tools":["tool1","tool2"]} formats.
 func HasCapability(capabilitiesJSON json.RawMessage, tool string) bool {
 	if len(capabilitiesJSON) == 0 {
 		return false
 	}
+	// Try {"tools": [...]} format
 	var caps struct {
 		Tools []string `json:"tools"`
 	}
-	if err := json.Unmarshal(capabilitiesJSON, &caps); err != nil {
+	if err := json.Unmarshal(capabilitiesJSON, &caps); err == nil {
+		for _, t := range caps.Tools {
+			if t == tool {
+				return true
+			}
+		}
 		return false
 	}
-	for _, t := range caps.Tools {
-		if t == tool {
-			return true
+	// Fallback: flat array format ["tool1", "tool2"]
+	var flatCaps []string
+	if err := json.Unmarshal(capabilitiesJSON, &flatCaps); err == nil {
+		for _, t := range flatCaps {
+			if t == tool {
+				return true
+			}
 		}
 	}
 	return false
