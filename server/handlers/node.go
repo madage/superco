@@ -382,9 +382,22 @@ func generateTokenHex() string {
 
 }
 
-// getLocalIP returns the first non-loopback IPv4 address of this host.
+// getServerIP returns the configured server IP from env, falling back to auto-detect.
 func getServerIP() string {
-	return "192.168.2.45"
+	if ip := os.Getenv("SERVER_IP"); ip != "" {
+		return ip
+	}
+	// Fallback: auto-detect first non-loopback IPv4
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP.String()
+		}
+	}
+	return "127.0.0.1"
 }
 
 // GenerateToken creates a one-time join token for a remote node.
