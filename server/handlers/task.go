@@ -379,6 +379,15 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 		return
 	}
 
+	// Dedup: if an active session already exists for this task, skip creation
+	var existingID string
+	if err := db.QueryRow(
+		`SELECT id FROM sessions WHERE task_id = $1 AND status IN ('pending', 'running') LIMIT 1`,
+		taskID,
+	).Scan(&existingID); err == nil {
+		return // session already exists for this task
+	}
+
 	// Create a session
 	sessionID := uuid.New().String()
 	now := time.Now()
@@ -390,9 +399,9 @@ func autoProcessTask(db *sql.DB, bus *protocol.MessageBus, taskID, agentProfileI
 	})
 
 	db.Exec(
-		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-		sessionID, userID, nodeID, agentProfileID, models.SessionPending, prompt, workspaceID, now,
+		`INSERT INTO sessions (id, user_id, node_id, agent_id, task_id, queue_id, agent_profile_id, status, prompt, workspace, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+		sessionID, userID, nodeID, agentProfileID, taskID, queueID, agentProfileID, models.SessionPending, prompt, workspaceID, now,
 	)
 
 	// Send session.create to the runtime

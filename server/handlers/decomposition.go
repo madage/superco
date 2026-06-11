@@ -418,10 +418,11 @@ func (h *DecompositionHandler) ApprovePlan(c *gin.Context) {
 	// Mark plan as approved
 	h.DB.Exec(`UPDATE decomposition_plans SET status = 'approved', updated_at = $1 WHERE id = $2`, now, planID)
 
-	// Set parent task to "in_progress" since it now has sub-tasks being worked on
+	// Set parent task to "blocked" — it now has sub-tasks being worked on.
+	// Blocked prevents the decomposition agent from being re-dispatched.
 	opts := TransitionOpts{ActorID: userIDStr}
-	if err := h.TaskService.MarkInProgress(taskID, opts); err != nil {
-		log.Printf("[Decomposition] Failed to set task %s in_progress: %v", taskID[:8], err)
+	if err := h.TaskService.MarkBlocked(taskID, opts); err != nil {
+		log.Printf("[Decomposition] Failed to block task %s: %v", taskID[:8], err)
 	}
 
 	// Post approval comment

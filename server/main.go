@@ -67,9 +67,44 @@ func main() {
 
 	messageBus.SetStore(msgStore)
 
+	// Start bus session GC: every 10 min, clean sessions older than 30 min with only system members
+	messageBus.StartGC(10*time.Minute, 30*time.Minute)
+
 	log.Println("[Server] Message store initialized")
 
+	// SessionService — DB session lifecycle + GC
+	sessionSvc := handlers.NewSessionService(database.DB, messageBus)
+
 	busH := handlers.NewBusHandler(messageBus, database.DB)
+	busH.SessionService = sessionSvc
+
+	// DB session GC: every 30 min, mark sessions idle >2h as failed
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			n, err := sessionSvc.CleanStaleDBSessions(2 * time.Hour)
+			if err != nil {
+				log.Printf("[SessionGC] DB cleanup error: %v", err)
+			} else if n > 0 {
+				log.Printf("[SessionGC] Cleaned %d stale DB sessions", n)
+			}
+		}
+	}()
+
+	// Message store GC: daily, keep 7 days
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			n, err := msgStore.CleanOldMessages(7 * 24 * time.Hour)
+			if err != nil {
+				log.Printf("[MessageGC] Cleanup error: %v", err)
+			} else if n > 0 {
+				log.Printf("[MessageGC] Cleaned %d old messages", n)
+			}
+		}
+	}()
 
 	// Handlers
 

@@ -20,11 +20,12 @@ import (
 // BusHandler handles WebSocket connections that speak the Message Bus protocol.
 // It replaces the functionality previously split across HandleNodeWS and HandleUIWS.
 type BusHandler struct {
-	DB        *sql.DB
-	Bus       *protocol.MessageBus
-	mu        sync.Mutex
-	connMutex map[*websocket.Conn]*sync.Mutex
-	Hub       *DashboardHub // for broadcasting to dashboards
+	DB             *sql.DB
+	Bus            *protocol.MessageBus
+	SessionService *SessionService
+	mu             sync.Mutex
+	connMutex      map[*websocket.Conn]*sync.Mutex
+	Hub            *DashboardHub // for broadcasting to dashboards
 }
 
 var busUpgrader = websocket.Upgrader{
@@ -305,7 +306,12 @@ func (h *BusHandler) HandleWS(c *gin.Context) {
 		h.handleEnvelope(endpointID, &env)
 	}
 
-	// Cleanup
+	// Cleanup — mark runtime sessions as failed before unregistering
+	if epType == "runtime" && h.SessionService != nil {
+		for _, sid := range h.Bus.GetEndpointSessions(endpointID) {
+			h.SessionService.MarkFailed(sid, "runtime disconnected")
+		}
+	}
 	h.Bus.Unregister(endpointID)
 	h.cleanupConn(conn)
 	conn.Close()
@@ -413,6 +419,13 @@ func (h *BusHandler) handleSessionJoin(env *protocol.Envelope) {
 		return
 	}
 	ok := h.Bus.JoinSession(env.SessionID, env.From, protocol.RoleMember)
+
+	// Mark DB session as running when a runtime joins
+	addr := protocol.ParseAddr(env.From)
+	if ok && addr.Type == protocol.EndpointRuntime && h.SessionService != nil {
+		h.SessionService.MarkRunning(env.SessionID)
+	}
+
 	if !ok {
 		// Session doesn't exist on the bus — likely a stale session from a previous server run
 		log.Printf("[Bus] Join failed: session %s not found for %s", env.SessionID, env.From)
@@ -428,7 +441,7 @@ func (h *BusHandler) handleSessionJoin(env *protocol.Envelope) {
 	}
 
 	// If the joining endpoint is a UI and the session has no runtime, invite available runtimes
-	addr := protocol.ParseAddr(env.From)
+	addr = protocol.ParseAddr(env.From)
 	if addr.Type == protocol.EndpointUI {
 		sess := h.Bus.GetSession(env.SessionID)
 		hasRuntime := false
@@ -476,6 +489,14 @@ func (h *BusHandler) handleSessionLeave(env *protocol.Envelope) {
 func (h *BusHandler) handleSessionEnd(env *protocol.Envelope) {
 	if env.SessionID == "" {
 		return
+	}
+	addr := protocol.ParseAddr(env.From)
+	if addr.Type == protocol.EndpointRuntime && h.SessionService != nil {
+		output := ""
+		if env.Payload != nil {
+			output = env.Payload.Output
+		}
+		h.SessionService.MarkCompleted(env.SessionID, output)
 	}
 	h.Bus.EndSession(env.SessionID)
 }

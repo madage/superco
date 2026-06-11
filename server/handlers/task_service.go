@@ -181,7 +181,7 @@ func (s *TaskService) transitionValid(from, to string) bool {
 		"in_progress": {"completed": true, "blocked": true, "review": true, "stuck": true},
 		"blocked":     {"todo": true, "stuck": true},
 		"completed":   {"done": true, "review": true},
-		"review":      {"done": true, "in_progress": true, "stuck": true},
+		"review":      {"done": true, "in_progress": true, "stuck": true, "blocked": true},
 		"done":        {"todo": true, "in_progress": true},
 		"stuck":       {"in_progress": true, "todo": true},
 	}

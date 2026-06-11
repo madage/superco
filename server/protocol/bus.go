@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,9 +121,14 @@ func (b *MessageBus) Unregister(id string) bool {
 		delete(b.endpoints, id)
 		b.logger.Printf("[Bus] Endpoint unregistered: %s", id)
 
-		// Remove from all sessions
-		for _, sess := range b.sessions {
+		// Remove from all sessions and clean up orphaned sessions
+		for sid, sess := range b.sessions {
 			delete(sess.Members, id)
+			// If only system members remain (e.g. system://api), the session is dead
+			if len(sess.Members) == 0 || b.onlySystemMembers(sess) {
+				delete(b.sessions, sid)
+				b.logger.Printf("[Bus] Session %s cleaned up (no real members)", sid)
+			}
 		}
 		return true
 	}
@@ -161,6 +167,19 @@ func (b *MessageBus) GetSession(sessionID string) *SessionInfo {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.sessions[sessionID]
+}
+
+// GetEndpointSessions returns all session IDs an endpoint is a member of.
+func (b *MessageBus) GetEndpointSessions(endpointID string) []string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var ids []string
+	for sid, sess := range b.sessions {
+		if _, ok := sess.Members[endpointID]; ok {
+			ids = append(ids, sid)
+		}
+	}
+	return ids
 }
 
 // FindEndpointsByCapability finds endpoints that have a specific capability.
@@ -235,6 +254,40 @@ func (b *MessageBus) EndSession(sessionID string) {
 
 	delete(b.sessions, sessionID)
 	b.logger.Printf("[Bus] Session ended: %s", sessionID)
+}
+
+// onlySystemMembers returns true if all session members have system:// prefix.
+func (b *MessageBus) onlySystemMembers(sess *SessionInfo) bool {
+	for memberID := range sess.Members {
+		if !strings.HasPrefix(memberID, "system://") {
+			return false
+		}
+	}
+	return true
+}
+
+// StartGC starts periodic garbage collection of stale sessions.
+func (b *MessageBus) StartGC(interval, maxAge time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			b.cleanStaleSessions(maxAge)
+		}
+	}()
+}
+
+func (b *MessageBus) cleanStaleSessions(maxAge time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	for sid, sess := range b.sessions {
+		if sess.Created.Before(cutoff) && b.onlySystemMembers(sess) {
+			delete(b.sessions, sid)
+			b.logger.Printf("[Bus] GC: removed stale session %s (created %v)", sid, sess.Created)
+		}
+	}
 }
 
 // ==================== Message Delivery ====================

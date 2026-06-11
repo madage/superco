@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useLang } from '../i18n/context';
 import { useResourceSync } from '../hooks/useResourceSync';
 import { notifications as notificationsApi, invitations as invitationsApi } from '../api/client';
@@ -37,6 +38,7 @@ export default function NotificationBell({ onWorkspaceChange, onOpenTask }: Prop
   const [tab, setTab] = useState<'notifications' | 'invitations'>('notifications');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
 
@@ -147,11 +149,32 @@ export default function NotificationBell({ onWorkspaceChange, onOpenTask }: Prop
 
   const totalBadge = unreadCount + invitations.length;
 
+  const handleToggle = useCallback(() => {
+    if (!open && bellRef.current) {
+      const rect = bellRef.current.getBoundingClientRect();
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+    }
+    setOpen(!open);
+  }, [open]);
+
+  // Recalculate position on window resize while open
+  useEffect(() => {
+    if (!open) return;
+    const onResize = () => {
+      if (bellRef.current) {
+        const rect = bellRef.current.getBoundingClientRect();
+        setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <button
         ref={bellRef}
-        onClick={() => setOpen(!open)}
+        onClick={handleToggle}
         title={t('notifInbox')}
         style={{
           background: 'none',
@@ -207,13 +230,13 @@ export default function NotificationBell({ onWorkspaceChange, onOpenTask }: Prop
         </div>
       )}
 
-      {open && (
+      {open && dropdownPos && createPortal(
         <div
           ref={dropdownRef}
           style={{
-            position: 'absolute',
-            left: '36px',
-            top: '-8px',
+            position: 'fixed',
+            top: dropdownPos.top,
+            left: dropdownPos.left,
             width: '380px',
             maxHeight: '480px',
             display: 'flex',
@@ -400,7 +423,7 @@ export default function NotificationBell({ onWorkspaceChange, onOpenTask }: Prop
             </div>
           )}
         </div>
-      )}
+      , document.body)}
     </div>
   );
 }

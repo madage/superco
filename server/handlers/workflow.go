@@ -352,6 +352,16 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			return nil, fmt.Errorf("当前任务状态为 %s，不能提出分解计划", parentStatus)
 		}
 
+		// Prevent duplicate decomposition: if an approved plan already exists, deny
+		var hasApprovedPlan bool
+		h.DB.QueryRow(
+			`SELECT EXISTS(SELECT 1 FROM decomposition_plans WHERE task_id = $1 AND status = 'approved')`,
+			*ctx.TaskID,
+		).Scan(&hasApprovedPlan)
+		if hasApprovedPlan {
+			return nil, fmt.Errorf("该任务已有审核通过的分解计划，子任务正在执行中，无需重复分解")
+		}
+
 		// Cancel any pending plan for this task
 		h.DB.Exec(`UPDATE decomposition_plans SET status = 'rejected' WHERE task_id = $1 AND status = 'pending'`, *ctx.TaskID)
 
@@ -1069,6 +1079,11 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to update status: %w", err)
+			}
+
+			// Release agent load for terminal statuses (tool-call path doesn't go through UpdateQueueStatus)
+			if p.Status == "completed" || p.Status == "blocked" {
+				h.DB.Exec(`UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1) WHERE id = $1`, ctx.AgentProfileID)
 			}
 
 			log.Printf("[Harness] Agent %s updated task %s status → %s", safe8(ctx.AgentName), p.TaskID[:8], p.Status)

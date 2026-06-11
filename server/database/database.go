@@ -489,6 +489,10 @@ func Migrate() error {
 		"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS max_sessions INT NOT NULL DEFAULT 3",
 
 		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS agent_id VARCHAR(36)",
+		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS task_id VARCHAR(36)",
+		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS queue_id VARCHAR(36)",
+		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS agent_profile_id VARCHAR(36)",
+		"CREATE INDEX IF NOT EXISTS idx_sessions_task_id ON sessions(task_id)",
 
 		"ALTER TABLE sessions ALTER COLUMN prompt DROP NOT NULL",
 

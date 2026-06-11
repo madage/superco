@@ -417,6 +417,19 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 		}
 	}
 
+	// Dedup: if an active session already exists for this task, reuse it
+	if req.TaskID != "" {
+		var existingID string
+		err := h.DB.QueryRow(
+			`SELECT id FROM sessions WHERE task_id = $1 AND status IN ('pending', 'running') LIMIT 1`,
+			req.TaskID,
+		).Scan(&existingID)
+		if err == nil {
+			c.JSON(http.StatusOK, gin.H{"session_id": existingID, "status": "existing"})
+			return
+		}
+	}
+
 	sessionID := uuid.New().String()
 	now := time.Now()
 
@@ -427,9 +440,9 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 
 	// Insert into DB
 	h.DB.Exec(
-		`INSERT INTO sessions (id, user_id, node_id, agent_id, status, prompt, workspace, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		sessionID, auth.UserID, auth.NodeID, agentID, models.SessionPending, prompt, workspaceID, now, now,
+		`INSERT INTO sessions (id, user_id, node_id, agent_id, task_id, queue_id, agent_profile_id, status, prompt, workspace, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+		sessionID, auth.UserID, auth.NodeID, agentID, req.TaskID, req.QueueID, req.AgentID, models.SessionPending, prompt, workspaceID, now,
 	)
 
 	// Create session on bus — route to the runtime
