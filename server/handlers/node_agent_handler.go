@@ -437,11 +437,9 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 				req.TaskID, title, description, agentList)
 	} else {
 		if agentSysPrompt != "" {
-			prompt = fmt.Sprintf("SYSTEM: %s\n\nTask ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## Instructions\n\n%s\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status
-- add_comment MUST be called at most ONCE per round. Put ALL your content into a SINGLE add_comment call. After calling add_comment, STOP — do not post any follow-up comments, summaries, or confirmations.", agentSysPrompt, req.TaskID, title, description, agentInstructions)
+			prompt = fmt.Sprintf("SYSTEM: %s\n\nTask ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## Instructions\n\n%s\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status\n- add_comment MUST be called at most ONCE per round. Put ALL your content into a SINGLE add_comment call. After calling add_comment, STOP — do not post any follow-up comments, summaries, or confirmations.", agentSysPrompt, req.TaskID, title, description, agentInstructions)
 		} else {
-			prompt = fmt.Sprintf("Task ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status
-- add_comment MUST be called at most ONCE per round. Put ALL your content into a SINGLE add_comment call. After calling add_comment, STOP — do not post any follow-up comments, summaries, or confirmations.", req.TaskID, title, description)
+			prompt = fmt.Sprintf("Task ID: %s\nTitle: %s\n\nDescription: %s\n\n## Your Role\n\nYou are an execution agent. Complete this task directly using your available tools.\n\n## CRITICAL RULES\n\n- Do NOT call propose_decomposition_plan or create_sub_task — you execute, you do NOT decompose\n- Complete the task described above using the appropriate tools available to you\n- Report your results clearly when done\n- Use harness tools (mcp__coaether-harness__ prefix) for task management: add_comment, get_task_detail, update_task_status\n- add_comment MUST be called at most ONCE per round. Put ALL your content into a SINGLE add_comment call. After calling add_comment, STOP — do not post any follow-up comments, summaries, or confirmations.", req.TaskID, title, description)
 		}
 	}
 
@@ -458,6 +456,15 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 			req.TaskID,
 		).Scan(&taskStatus, &loopCount, &maxLoops); err == nil {
 			ctxLines = append(ctxLines, fmt.Sprintf("\n任务状态: %s\n重试次数: %d/%d", taskStatus, loopCount, maxLoops))
+		}
+
+		// Current round number — count agent comments already posted, then +1
+		var agentCommentCount int
+		if err := h.DB.QueryRow(
+			`SELECT COUNT(*) FROM task_comments WHERE task_id = $1 AND agent_profile_id = $2 AND is_agent_comment = true`,
+			req.TaskID, req.AgentID,
+		).Scan(&agentCommentCount); err == nil {
+			ctxLines = append(ctxLines, fmt.Sprintf("\n当前为第 %d 轮对话", agentCommentCount+1))
 		}
 
 		// Last review (rejection reason)

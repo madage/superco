@@ -810,8 +810,7 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			agentProfileID = ctx.AgentProfileID
 		}
 
-		// Dedup: if same agent already posted identical content to this task
-		// within 15s, return the existing comment ID instead of inserting.
+		// Dedup 1: exact content match within 15s → skip
 		if agentProfileID != nil {
 			var dupID string
 			if err := h.DB.QueryRow(
@@ -823,6 +822,29 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 					"comment_id": dupID,
 					"status":     "duplicate",
 				}, nil
+			}
+
+			// Dedup 2: if same agent already posted within 5s and the new content
+			// is a short confirmation (≤50 runes, contains keywords like "已发送"/"已提出"),
+			// append it to the existing comment instead of creating a duplicate.
+			runes := []rune(p.Content)
+			if len(runes) <= 50 && isConfirmMessage(p.Content) {
+				var existingID, existingContent string
+				if err := h.DB.QueryRow(
+					`SELECT id, content FROM task_comments WHERE task_id = $1 AND agent_profile_id = $2
+					 AND created_at > NOW() - INTERVAL '5 seconds' ORDER BY created_at DESC LIMIT 1`,
+					p.TaskID, agentProfileID,
+				).Scan(&existingID, &existingContent); err == nil {
+					merged := existingContent + "\n\n" + p.Content
+					h.DB.Exec(
+						`UPDATE task_comments SET content = $1, updated_at = NOW() WHERE id = $2`,
+						merged, existingID,
+					)
+					return map[string]interface{}{
+						"comment_id": existingID,
+						"status":     "merged",
+					}, nil
+				}
 			}
 		}
 
@@ -1246,6 +1268,25 @@ func isCircularDelegation(db *sql.DB, taskID string, targetAgentID string) bool 
 	}
 	return false
 }
+
+	// isConfirmMessage detects short confirmation messages that Claude
+	// generates after its main reply (e.g. "第X轮问题已发送，等待回复。").
+	func isConfirmMessage(content string) bool {
+		keywords := []string{
+			"已发送",
+			"已提出",
+			"等待你的回复",
+			"等待回复",
+			"等你回复",
+			"问题已发",
+		}
+		for _, kw := range keywords {
+			if strings.Contains(content, kw) {
+				return true
+			}
+		}
+		return false
+	}
 
 func safe8(s string) string {
 	if len(s) >= 8 {
