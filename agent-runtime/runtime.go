@@ -278,6 +278,7 @@ var harnessTools = map[string]bool{
 	"get_task_detail":            true,
 	"list_sub_tasks":             true,
 	"update_task_status":         true,
+		"search_agent_profiles":      true,
 }
 
 // isAutoTaskSession checks if the session is for an auto-task agent.
@@ -1003,6 +1004,27 @@ func (r *Runtime) handleSessionComplete(sessionID, result, stopReason string, is
 	}
 }
 
+// findActiveSession looks for an active (non-completed) Claude session for a given task and agent.
+// Returns the session ID, or empty string if none found.
+func (r *Runtime) findActiveSession(taskID, agentProfileID string) string {
+	r.connMu.Lock()
+	defer r.connMu.Unlock()
+
+	cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend)
+	if !ok {
+		return ""
+	}
+
+	for sessionID, meta := range r.sessionMeta {
+		if meta["task_id"] == taskID && meta["agent_profile_id"] == agentProfileID {
+			if cli.HasSession(sessionID) {
+				return sessionID
+			}
+		}
+	}
+	return ""
+}
+
 // handleAgentMention processes an @mention event from the server.
 // It evaluates whether the agent should work on the task or just reply.
 func (r *Runtime) handleAgentMention(env *protocol.Envelope) {
@@ -1088,33 +1110,55 @@ Respond with exactly one of these two formats:
 		r.updateQueueStatus(queueID, "completed", reply)
 
 	case strings.HasPrefix(evalResult, "WORK:"):
-		// Set queue to processing (server will set task to in_progress)
-		r.updateQueueStatus(queueID, "processing", "")
+		// Check if there's already an active session for this task+agent
+		existingSessionID := r.findActiveSession(taskID, agentProfileID)
 
-		// Create a session for task processing
-		sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
-		sessionReq := map[string]string{
-			"task_id":  taskID,
-			"agent_id": agentProfileID,
-			"queue_id": queueID,
-		}
-		sessionBody, _ := json.Marshal(sessionReq)
-		resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
-		if err != nil {
-			log.Printf("[Runtime] Session creation failed: %v", err)
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusCreated {
-			var sr struct {
-				SessionID string `json:"session_id"`
+		if existingSessionID != "" {
+			// Inject @mention into the existing session instead of creating a new one
+			injectMsg := fmt.Sprintf(`[@mention] You have been mentioned in a comment on this task:
+
+%s
+
+Continue working on this task and address the comment above.`, commentContent)
+
+			if cli, ok := r.backends["claude"].(*backends.ClaudeCLIBackend); ok {
+				if err := cli.InjectMessage(existingSessionID, injectMsg); err != nil {
+					log.Printf("[Runtime] Failed to inject mention: %v, falling back to new session", err)
+					existingSessionID = "" // fall through
+				} else {
+					log.Printf("[Runtime] Injected @mention into existing session %s for task %s", existingSessionID[:8], taskID[:8])
+					r.updateQueueStatus(queueID, "completed", "injected into existing session "+existingSessionID[:8])
+				}
 			}
-			json.NewDecoder(resp.Body).Decode(&sr)
-			log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
-		} else {
-			log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
 		}
 
+		if existingSessionID == "" {
+			// No active session — create a new one (original flow)
+			r.updateQueueStatus(queueID, "processing", "")
+
+			sessionURL := fmt.Sprintf("%s/api/node/sessions?%s", baseURL, auth)
+			sessionReq := map[string]string{
+				"task_id":  taskID,
+				"agent_id": agentProfileID,
+				"queue_id": queueID,
+			}
+			sessionBody, _ := json.Marshal(sessionReq)
+			resp, err := http.Post(sessionURL, "application/json", bytes.NewBuffer(sessionBody))
+			if err != nil {
+				log.Printf("[Runtime] Session creation failed: %v", err)
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusCreated {
+				var sr struct {
+					SessionID string `json:"session_id"`
+				}
+				json.NewDecoder(resp.Body).Decode(&sr)
+				log.Printf("[Runtime] Session %s created for mentioned task %s", sr.SessionID[:8], taskID[:8])
+			} else {
+				log.Printf("[Runtime] Session creation returned %d", resp.StatusCode)
+			}
+		}
 	default:
 		log.Printf("[Runtime] Unrecognized evaluation result, using as reply")
 		reply := evalResult

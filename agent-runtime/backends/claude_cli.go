@@ -704,6 +704,42 @@ func (b *ClaudeCLIBackend) SendToolResult(sessionID, toolUseID string, result in
 	}
 }
 
+// HasSession checks if a session exists and is still active (not completed).
+func (b *ClaudeCLIBackend) HasSession(sessionID string) bool {
+	b.mu.Lock()
+	sess, exists := b.sessions[sessionID]
+	b.mu.Unlock()
+	return exists && !sess.isCompleted()
+}
+
+// InjectMessage sends a user message directly to an existing session's stdin.
+func (b *ClaudeCLIBackend) InjectMessage(sessionID, text string) error {
+	b.mu.Lock()
+	sess, exists := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !exists || sess.isCompleted() {
+		return fmt.Errorf("session %s not active", sessionID[:min(8, len(sessionID))])
+	}
+
+	jsonMsg := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%s}}`, jsonEscape(text))
+	sid := sessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.stdin == nil {
+		return fmt.Errorf("session %s stdin not available", sid)
+	}
+	_, err := io.WriteString(sess.stdin, jsonMsg+"\n")
+	if err != nil {
+		return fmt.Errorf("session %s write error: %w", sid, err)
+	}
+	sess.updateActivity()
+	log.Printf("[ClaudeCLI] Injected message to session %s", sid)
+	return nil
+}
+
 // Evaluate starts a transient claude subprocess, sends a prompt, and returns the response.
 // Used by the runtime to evaluate whether an @mention requires work or just a reply.
 func (b *ClaudeCLIBackend) Evaluate(prompt string) (string, error) {
