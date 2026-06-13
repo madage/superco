@@ -804,6 +804,20 @@ func (h *WorkflowHandler) RegisterToolExecutors() {
 			return nil, fmt.Errorf("invalid params: %w", err)
 		}
 
+		// Dedup: if same agent already posted identical content to this task
+		// within 15s, return the existing comment ID instead of inserting.
+		var dupID string
+		if err := h.DB.QueryRow(
+			`SELECT id FROM task_comments WHERE task_id = $1 AND agent_profile_id = $2 AND content = $3
+			 AND created_at > NOW() - INTERVAL '15 seconds' LIMIT 1`,
+			p.TaskID, ctx.AgentProfileID, p.Content,
+		).Scan(&dupID); err == nil {
+			return map[string]interface{}{
+				"comment_id": dupID,
+				"status":     "duplicate",
+			}, nil
+		}
+
 		commentID := uuid.New().String()
 		now := time.Now()
 
