@@ -226,6 +226,16 @@ func (h *NodeAgentHandler) UpdateQueueStatus(c *gin.Context) {
 		// Decrement current_load
 		h.DB.Exec("UPDATE agent_profiles SET current_load = GREATEST(0, current_load - 1) WHERE id = (SELECT agent_profile_id FROM task_agent_queue WHERE id = $1)", queueID)
 
+		// Sync session DB status to match queue status
+		sessionStatus := models.SessionCompleted
+		if req.Status == "failed" {
+			sessionStatus = models.SessionFailed
+		}
+		h.DB.Exec(
+			`UPDATE sessions SET status = $1, completed_at = NOW(), updated_at = NOW() WHERE queue_id = $2 AND status IN ('pending', 'running')`,
+			sessionStatus, queueID,
+		)
+
 		if req.Status == "completed" {
 			var taskID, agentProfileID string
 			h.DB.QueryRow("SELECT task_id, agent_profile_id FROM task_agent_queue WHERE id = $1", queueID).Scan(&taskID, &agentProfileID)
@@ -433,8 +443,87 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 		}
 	}
 
-	// Dedup: if an active session already exists for this task, reuse it
-	if req.TaskID != "" {
+	// --- 前情提要: inject task context for retry sessions ---
+	if req.QueueID != "" && req.TaskID != "" {
+		var ctxLines []string
+		ctxLines = append(ctxLines, "\n\n--- 前情提要 ---")
+
+		// Task status & retry count
+		var taskStatus string
+		var loopCount, maxLoops int
+		if err := h.DB.QueryRow(
+			`SELECT COALESCE(status,''), COALESCE(agent_loop_count,0), COALESCE(max_agent_loops,3) FROM tasks WHERE id = $1`,
+			req.TaskID,
+		).Scan(&taskStatus, &loopCount, &maxLoops); err == nil {
+			ctxLines = append(ctxLines, fmt.Sprintf("\n任务状态: %s\n重试次数: %d/%d", taskStatus, loopCount, maxLoops))
+		}
+
+		// Last review (rejection reason)
+		var reviewAction, reviewComment string
+		if err := h.DB.QueryRow(
+			`SELECT COALESCE(action,''), COALESCE(comment,'') FROM task_reviews WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`,
+			req.TaskID,
+		).Scan(&reviewAction, &reviewComment); err == nil && reviewComment != "" {
+			ctxLines = append(ctxLines, fmt.Sprintf("\n最近一次审核结果:\n%s: %s", reviewAction, reviewComment))
+		}
+
+		// Last agent execution result
+		var resultSummary string
+		if err := h.DB.QueryRow(
+			`SELECT COALESCE(result_summary,'') FROM task_agent_queue WHERE task_id = $1 AND result_summary != '' ORDER BY completed_at DESC NULLS LAST LIMIT 1`,
+			req.TaskID,
+		).Scan(&resultSummary); err == nil && resultSummary != "" {
+			ctxLines = append(ctxLines, fmt.Sprintf("\n最近一次 Agent 执行结果:\n%s", resultSummary))
+		}
+
+		// Recent comments (last 5)
+		rows, err := h.DB.Query(
+			`SELECT COALESCE(u.username,''), COALESCE(ap.name,''), c.content, c.created_at, c.is_agent_comment
+			 FROM task_comments c
+			 LEFT JOIN users u ON u.id = c.user_id
+			 LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
+			 WHERE c.task_id = $1
+			 ORDER BY c.created_at DESC LIMIT 5`, req.TaskID,
+		)
+		if err == nil {
+			var commentLines []string
+			for rows.Next() {
+				var userName, agentName, content string
+				var createdAt time.Time
+				var isAgentComment bool
+				if err := rows.Scan(&userName, &agentName, &content, &createdAt, &isAgentComment); err == nil {
+					source := userName
+					if isAgentComment && agentName != "" {
+						source = agentName + " (Agent)"
+					}
+					if source == "" {
+						if isAgentComment {
+							source = "Agent"
+						} else {
+							source = "Unknown"
+						}
+					}
+					commentLines = append(commentLines, fmt.Sprintf("%s [%s]: %s", createdAt.Format("2006-01-02 15:04"), source, content))
+				}
+			}
+			rows.Close()
+			if len(commentLines) > 0 {
+				ctxLines = append(ctxLines, "\n最近评论:")
+				for i := len(commentLines) - 1; i >= 0; i-- {
+					ctxLines = append(ctxLines, "  "+commentLines[i])
+				}
+			}
+		}
+
+		if len(ctxLines) > 1 {
+			prompt += strings.Join(ctxLines, "\n")
+		}
+	}
+
+	// Dedup: if an active session already exists for this task, reuse it.
+	// Only applies to duplicate polls (no queue_id). When queue_id is
+	// present (e.g. review rejection retry), always create a fresh session.
+	if req.TaskID != "" && req.QueueID == "" {
 		var existingID string
 		err := h.DB.QueryRow(
 			`SELECT id FROM sessions WHERE task_id = $1 AND status IN ('pending', 'running') LIMIT 1`,
@@ -443,6 +532,23 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 		if err == nil {
 			c.JSON(http.StatusOK, gin.H{"session_id": existingID, "status": "existing"})
 			return
+		}
+	}
+
+	// If this is a retry (has queue_id), close any stale running session for this task
+	if req.QueueID != "" && req.TaskID != "" {
+		var staleID string
+		err := h.DB.QueryRow(
+			`SELECT id FROM sessions WHERE task_id = $1 AND status IN ('pending', 'running') LIMIT 1`,
+			req.TaskID,
+		).Scan(&staleID)
+		if err == nil {
+			h.DB.Exec(
+				`UPDATE sessions SET status = $1, error_log = 'superseded by retry', completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
+				models.SessionFailed, staleID,
+			)
+			h.Bus.EndSession(staleID)
+			log.Printf("[NodeAgent] Closed stale session %s for task %s (retry)", staleID[:8], req.TaskID[:8])
 		}
 	}
 

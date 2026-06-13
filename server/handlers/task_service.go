@@ -256,7 +256,9 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 
 	// ---- stuck -> todo / in_progress (manual unstick) ----
 	case from == string(models.TaskStuck):
-		// Manual unstick: signal sent, no special side effects
+		if to == string(models.TaskInProgress) || to == string(models.TaskTodo) {
+			s.tryAutoDispatch(taskID, snap)
+		}
 	}
 }
 
