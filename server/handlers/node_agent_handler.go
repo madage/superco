@@ -485,14 +485,17 @@ You are a task-decomposition agent. Your ONLY job is to break down this task int
 			ctxLines = append(ctxLines, fmt.Sprintf("\n最近一次 Agent 执行结果:\n%s", resultSummary))
 		}
 
-		// Recent comments (last 5)
+		// Recent comments (last 5), excluding current agent's own comments
+		// (--resume already restores the agent's full conversation history;
+		// including agent comments here would duplicate context and cause
+		// Claude to repeat itself within a single round.)
 		rows, err := h.DB.Query(
 			`SELECT COALESCE(u.username,''), COALESCE(ap.name,''), c.content, c.created_at, c.is_agent_comment
 			 FROM task_comments c
 			 LEFT JOIN users u ON u.id = c.user_id
 			 LEFT JOIN agent_profiles ap ON ap.id = c.agent_profile_id
-			 WHERE c.task_id = $1
-			 ORDER BY c.created_at DESC LIMIT 5`, req.TaskID,
+			 WHERE c.task_id = $1 AND c.agent_profile_id != $2
+			 ORDER BY c.created_at DESC LIMIT 5`, req.TaskID, req.AgentID,
 		)
 		if err == nil {
 			var commentLines []string
