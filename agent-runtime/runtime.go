@@ -37,7 +37,8 @@ type Runtime struct {
 	connMu      sync.Mutex
 	backends    map[string]Backend
 	endpoint    string
-	sessionMeta map[string]map[string]string // sessionID → {queueID, taskID, ...}
+	sessionMeta        map[string]map[string]string // sessionID → {queueID, taskID, ...}
+	recentlyCompleted  map[string]time.Time          // "taskID:agentProfileID" → completion time
 }
 
 // NewRuntime creates a new Runtime.
@@ -50,6 +51,7 @@ func NewRuntime(serverURL, nodeID, name, token, secret string) *Runtime {
 		Secret:      secret,
 		backends:    make(map[string]Backend),
 		sessionMeta: make(map[string]map[string]string),
+		recentlyCompleted: make(map[string]time.Time),
 		endpoint:    "runtime://" + nodeID,
 	}
 }
@@ -305,10 +307,7 @@ func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
 		}
 
 		if harnessTools[baseName] {
-			// Route MCP-prefixed harness tool to the server Harness API
-			harnessEnv := *env
-			harnessEnv.Payload.Tool = baseName
-			r.handleHarnessToolCall(&harnessEnv)
+			// MCP server handles this — do NOT forward to Harness API
 			return
 		}
 
@@ -329,7 +328,7 @@ func (r *Runtime) handleAutoTaskToolCall(env *protocol.Envelope) {
 	}
 
 	if harnessTools[toolName] {
-		r.handleHarnessToolCall(env)
+		// Harness tool without MCP prefix — MCP server handles this too
 	} else {
 		r.handleMCPToolCall(env)
 	}
@@ -977,6 +976,15 @@ func (r *Runtime) handleSessionComplete(sessionID, result, stopReason string, is
 	baseURL := "http://" + r.ServerURL
 	auth := fmt.Sprintf("node_id=%s&node_secret=%s", r.NodeID, r.Secret)
 
+
+	// Record task+agent completion to prevent duplicate sessions from rapid @mentions
+	taskID := meta["task_id"]
+	agentProfileID := meta["agent_profile_id"]
+	if taskID != "" && agentProfileID != "" {
+		r.connMu.Lock()
+		r.recentlyCompleted[taskID+":"+agentProfileID] = time.Now()
+		r.connMu.Unlock()
+	}
 	status := "completed"
 	if isError {
 		status = "failed"
@@ -1122,6 +1130,21 @@ Respond with exactly one of these two formats:
 			log.Printf("[Runtime] Session %s already active for task %s — skipping (agent will discover via get_task_detail)", existingSessionID[:8], taskID[:8])
 			return
 		}
+
+		// Brief dedup window (15s) only to prevent race between
+		// handleAgentMention and queue poller creating duplicate sessions.
+		// Persistent workspaces + --resume make continuation sessions safe.
+		recentKey := taskID + ":" + agentProfileID
+		r.connMu.Lock()
+		if completedAt, exists := r.recentlyCompleted[recentKey]; exists {
+			if time.Since(completedAt) < 15*time.Second {
+				r.connMu.Unlock()
+				log.Printf("[Runtime] Task %s session just completed — skipping to avoid race", taskID[:8])
+				return
+			}
+			delete(r.recentlyCompleted, recentKey)
+		}
+		r.connMu.Unlock()
 
 		// No active session — create a new one (original flow)
 		r.updateQueueStatus(queueID, "processing", "")

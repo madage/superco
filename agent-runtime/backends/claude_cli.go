@@ -185,8 +185,15 @@ func (b *ClaudeCLIBackend) startSession(sessionID, taskID, queueID, profileID st
 
 	cmd := exec.CommandContext(ctx, b.command, args...)
 
-	// Set session-specific workspace directory
-	wsDir := filepath.Join("workspaces", sessionID)
+	// Use persistent workspace per task+agent so Claude sees conversation
+	// history across sessions for the same task. --resume continues prior work.
+	var wsKey string
+	if taskID == "" || profileID == "" {
+		wsKey = sessionID // fallback for non-task sessions
+	} else {
+		wsKey = taskID[:8] + "-" + profileID[:8]
+	}
+	wsDir := filepath.Join("workspaces", wsKey)
 	if err := os.MkdirAll(wsDir, 0755); err != nil {
 		log.Printf("[ClaudeCLI] Failed to create workspace %s: %v", wsDir, err)
 	} else {

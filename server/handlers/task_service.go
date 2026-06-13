@@ -252,7 +252,7 @@ func (s *TaskService) dispatchSideEffects(taskID, from, to string, snap taskSnap
 
 		// ---- done -> todo / in_progress (re-open) ----
 	case from == string(models.TaskDone) && (to == string(models.TaskTodo) || to == string(models.TaskInProgress)):
-		// Re-open: just signal, no other side effects needed
+		s.tryAutoDispatch(taskID, snap)
 
 	// ---- stuck -> todo / in_progress (manual unstick) ----
 	case from == string(models.TaskStuck):
@@ -557,17 +557,7 @@ func (s *TaskService) tryAutoDispatch(taskID string, snap taskSnapshot) {
 		return
 	}
 
-	// Check agent capacity
-	var canProcess bool
-	s.DB.QueryRow(
-		`SELECT COALESCE(current_load, 0) < COALESCE(max_concurrency, 1) FROM agent_profiles WHERE id = $1 AND enabled = true`,
-		snap.AssigneeID,
-	).Scan(&canProcess)
-	if !canProcess {
-		return
-	}
-
-	// Check agent enabled
+	// Check if agent is enabled (capacity is validated at claim time, not dispatch time)
 	var enabled bool
 	s.DB.QueryRow(`SELECT enabled FROM agent_profiles WHERE id = $1`, snap.AssigneeID).Scan(&enabled)
 	if !enabled {
