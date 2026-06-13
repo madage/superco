@@ -21,6 +21,38 @@ function highlightMentions(html: string, agentNames: Set<string> = new Set()): s
   });
 }
 
+function formatCommentContent(content: string, isAgent: boolean, agentNames: Set<string>): string {
+  const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!isAgent) return highlightMentions(escaped.replace(/\n/g, '<br>'), agentNames);
+  let html = escaped
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code style="background:#e8e8e8;padding:1px 5px;border-radius:3px;font-size:0.9em">$1</code>');
+  const lines = html.split('\n');
+  const out: string[] = [];
+  let inUl = false, inOl = false;
+  for (const line of lines) {
+    const ulMatch = line.match(/^(\s*)[-*]\s+(.+)/);
+    const olMatch = line.match(/^(\s*)(\d+)\.\s+(.+)/);
+    if (ulMatch) {
+      if (inOl) { out.push('</ol>'); inOl = false; }
+      if (!inUl) { out.push('<ul style="margin:4px 0;padding-left:20px">'); inUl = true; }
+      out.push(`<li style="margin:2px 0">${ulMatch[2]}</li>`);
+    } else if (olMatch) {
+      if (inUl) { out.push('</ul>'); inUl = false; }
+      if (!inOl) { out.push('<ol style="margin:4px 0;padding-left:20px">'); inOl = true; }
+      out.push(`<li style="margin:2px 0">${olMatch[3]}</li>`);
+    } else {
+      if (inUl) { out.push('</ul>'); inUl = false; }
+      if (inOl) { out.push('</ol>'); inOl = false; }
+      if (line.trim() === '') out.push('<br>');
+      else out.push(`<div style="margin:2px 0">${line}</div>`);
+    }
+  }
+  if (inUl) out.push('</ul>');
+  if (inOl) out.push('</ol>');
+  return highlightMentions(out.join('\n'), agentNames);
+}
+
 export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailProps) {
   const { t, lang } = useLang();
   const { workspaceId } = useWorkspace();
@@ -438,16 +470,7 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
                 {new Date(c.created_at).toLocaleString()}
               </span>
               <div style={{ flex: 1 }} />
-              <button onClick={() => startReply(c.id)}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: '#1976d2', padding: '0 6px', fontSize: '0.8em',
-                  lineHeight: 1, opacity: 0.6, transition: 'opacity 0.15s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
-                onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; }}
-              >{'Reply'}</button>
-              {isOwn && (
+              {isOwn && !isAgent && (
                 <button onClick={(e) => { e.stopPropagation(); handleDeleteComment(c.id); }}
                   title={confirmDeleteComment === c.id ? t('taskDetailDeleteCommentHint') : t('taskDetailDeleteCommentTitle')}
                   style={{
@@ -467,7 +490,18 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
             <div style={{
               fontSize: '0.9em', lineHeight: 1.5, color: '#333',
               wordBreak: 'break-word',
-            }} dangerouslySetInnerHTML={{ __html: highlightMentions(c.content, agentNames) }} />
+            }} dangerouslySetInnerHTML={{ __html: formatCommentContent(c.content, isAgent, agentNames) }} />
+            <div style={{ marginTop: '6px' }}>
+              <button onClick={() => startReply(c.id)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: '#1976d2', padding: '0 4px', fontSize: '0.78em',
+                  lineHeight: 1, opacity: 0.6, transition: 'opacity 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; }}
+              >{t('commentReply')}</button>
+            </div>
             {showReplyEditor && (
               <div style={{ marginTop: '10px', paddingLeft: '8px', borderLeft: '2px solid #1976d2', position: 'relative' }}>
                 {mentionOpen && mentionEditor === 'reply' && (
@@ -1120,8 +1154,8 @@ export function TaskDetail({ task, onClose, onDelete, onRefresh }: TaskDetailPro
               </div>
             )}
 
-            {/* Agent Report — full result_summary from completed queue items */}
-            {taskQueueItems.filter(q => q.status === 'completed' && q.result_summary).length > 0 && (
+            {/* Agent Report — hidden per user request */}
+            {false && taskQueueItems.filter(q => q.status === 'completed' && q.result_summary).length > 0 && (
               <div style={{ marginBottom: '24px' }}>
                 <h4 style={{ margin: '0 0 8px 0', fontSize: '0.85em', color: '#999', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   🤖 {t('taskDetailAgentReport') || 'Agent Report'}

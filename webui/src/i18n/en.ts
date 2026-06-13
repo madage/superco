@@ -532,6 +532,7 @@ export const en = {
   commentPlaceholder: 'Write a comment...',
   commentPost: 'Comment',
   commentEmpty: 'No comments yet',
+  commentReply: 'Reply',
   commentDelete: 'Delete',
   commentDeleteConfirm: 'Delete this comment?',
   commentBy: 'commented',

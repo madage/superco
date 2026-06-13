@@ -532,6 +532,7 @@ export const zh = {
   commentPlaceholder: '输入评论...',
   commentPost: '发布',
   commentEmpty: '暂无评论',
+  commentReply: '回复',
   commentDelete: '删除',
   commentDeleteConfirm: '确定删除这条评论？',
   commentBy: '评论于',
